@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useState, useRef } from "react";
 import {
   StyleSheet,
   View,
@@ -64,6 +64,9 @@ export default function Guide({ onSessionEnd, userId, therapistName }: GuideProp
   const [echoPreventionEnabled, setEchoPreventionEnabled] = useState(true);
   const [avatarSpeakingStartTime, setAvatarSpeakingStartTime] = useState<number | null>(null);
   const [sessionInitialized, setSessionInitialized] = useState(false);
+  
+  // Ref for interim timer
+  const interimTimerRef = useRef<NodeJS.Timeout | null>(null);
 
   // Start audio session and auto-start HeyGen session
   useEffect(() => {
@@ -166,6 +169,11 @@ export default function Guide({ onSessionEnd, userId, therapistName }: GuideProp
       });
       clearInterval(microphoneHealthCheck);
       clearInterval(avatarSpeakingTimeoutCheck);
+      
+      // Clean up interim timer
+      if (interimTimerRef.current) {
+        clearTimeout(interimTimerRef.current);
+      }
     };
   }, []);
 
@@ -333,7 +341,7 @@ export default function Guide({ onSessionEnd, userId, therapistName }: GuideProp
       
       setRecognizedText(transcribedText);
       
-      // Only send final results to avoid spamming
+      // Process both final and interim results (with delay for interim)
       if (event.isFinal) {
         // Filter out very short utterances that might be noise
         if (transcribedText.trim().length >= 3) {
@@ -346,6 +354,21 @@ export default function Guide({ onSessionEnd, userId, therapistName }: GuideProp
         }
       } else {
         console.log('⏳ Interim result - waiting for final...');
+        
+        // Process interim results after a delay if they're substantial
+        if (transcribedText.trim().length >= 5) {
+          // Clear any existing interim timer
+          if (interimTimerRef.current) {
+            clearTimeout(interimTimerRef.current);
+          }
+          
+          // Set a timer to process this interim result if no final result comes
+          interimTimerRef.current = setTimeout(() => {
+            console.log('⏰ Processing interim result after delay:', transcribedText);
+            sendVoiceMessage(transcribedText);
+            setRecognizedText('');
+          }, 1500); // 1.5 second delay
+        }
       }
     } else {
       console.log('⚠️ No speech results in event');
