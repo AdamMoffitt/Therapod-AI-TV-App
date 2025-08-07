@@ -30,7 +30,7 @@ import {
   serverTimestamp,
 } from "firebase/firestore";
 import { db } from "@/firebase";
-import Guide from "./Guide";
+import InteractiveAvatar from "./InteractiveAvatar";
 import { getSelectedPod, saveSelectedPod, storage } from "@/utils/storage";
 import QRCode from "react-native-qrcode-svg";
 import * as Sentry from '@sentry/react-native';
@@ -692,18 +692,42 @@ export default function HomeScreenView() {
 
   useEffect(() => {
     const fetchPods = async () => {
-      const podsCollection = await getDocs(collection(db, "therapods"));
-      const podList = podsCollection.docs.map((doc) => ({
-        id: doc.id,
-        ...doc.data(),
-      })) as Pod[];
-      setPods(podList);
+      try {
+        console.log('🔍 Fetching pods from Firebase...');
+        const podsCollection = await getDocs(collection(db, "therapods"));
+        console.log('📊 Firebase response:', podsCollection);
+        console.log('📋 Number of pods found:', podsCollection.docs.length);
+        
+        const podList = podsCollection.docs.map((doc) => {
+          const podData = {
+            id: doc.id,
+            ...doc.data(),
+          };
+          console.log('🏠 Pod data:', podData);
+          return podData;
+        }) as Pod[];
+        
+        console.log('✅ Setting pods state with:', podList);
+        setPods(podList);
+      } catch (error: any) {
+        console.error('❌ Error fetching pods:', error);
+        console.error('❌ Error details:', {
+          message: error?.message,
+          code: error?.code,
+          stack: error?.stack
+        });
+      }
     };
 
     const loadSelectedPod = () => {
-      const podId = getSelectedPod();
-      if (podId) {
-        setSelectedPod(podId);
+      try {
+        const podId = getSelectedPod();
+        console.log('🎯 Loading selected pod:', podId);
+        if (podId) {
+          setSelectedPod(podId);
+        }
+      } catch (error) {
+        console.error('❌ Error loading selected pod:', error);
       }
     };
 
@@ -1225,7 +1249,7 @@ export default function HomeScreenView() {
   if (!selectedPod) {
     return (
       <View style={styles.contentContainer}>
-        <Text style={styles.title}>Choose Your Therapod</Text>
+        <Text style={styles.title}>Choose Your Therapod Test</Text>
         <FlatList
           data={pods}
           keyExtractor={(item) => item.id}
@@ -1249,7 +1273,7 @@ export default function HomeScreenView() {
   // Show AI Therapy with Guide component
   if (sessionType === "ai_therapy" && podStatus === "active" && countdown === null) {
     return (
-      <Guide 
+      <InteractiveAvatar 
         onSessionEnd={handleCloseSession}
         userId={currentUserId}
         therapistName={currentTherapistName}

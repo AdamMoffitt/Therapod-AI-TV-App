@@ -35,13 +35,13 @@ const API_CONFIG = {
   serverUrl: "https://api.heygen.com",
 };
 
-interface GuideProps {
+interface InteractiveAvatarProps {
   onSessionEnd?: () => void;
   userId?: string | null;
   therapistName?: string | null;
 }
 
-export default function Guide({ onSessionEnd, userId, therapistName }: GuideProps) {
+export default function InteractiveAvatar({ onSessionEnd, userId, therapistName }: InteractiveAvatarProps) {
   const [wsUrl, setWsUrl] = useState<string>("");
   const [token, setToken] = useState<string>("");
   const [sessionToken, setSessionToken] = useState<string>("");
@@ -63,24 +63,38 @@ export default function Guide({ onSessionEnd, userId, therapistName }: GuideProp
   const [echoPreventionEnabled, setEchoPreventionEnabled] = useState(true);
   const [avatarSpeakingStartTime, setAvatarSpeakingStartTime] = useState<number | null>(null);
   const [sessionInitialized, setSessionInitialized] = useState(false);
+  
+  // Enhanced echo prevention state
+  const [lastAvatarSpeechEnd, setLastAvatarSpeechEnd] = useState<number>(0);
+  const [micCooldownPeriod, setMicCooldownPeriod] = useState(2000); // 2 seconds cooldown
+  const [echoDetectionThreshold, setEchoDetectionThreshold] = useState(0.4);
+  const [isInEchoCooldown, setIsInEchoCooldown] = useState(false);
+  
+  // UI Debug state for microphone status
+  const [debugLogs, setDebugLogs] = useState<string[]>([]);
+  const [showDebugPanel, setShowDebugPanel] = useState(true);
+  const [micStatus, setMicStatus] = useState<'ON' | 'OFF' | 'PAUSED' | 'COOLDOWN'>('OFF');
 
   // Start audio session and auto-start HeyGen session
   useEffect(() => {
     const setupAudio = async () => {
-              // Configure audio mode to prevent echo
-        try {
-          await Audio.setAudioModeAsync({
-            allowsRecordingIOS: true,
-            playsInSilentModeIOS: true,
-            staysActiveInBackground: true,
-            shouldDuckAndroid: false,
-            playThroughEarpieceAndroid: false,
-          });
-          console.log('✅ Audio mode configured to prevent echo');
-        } catch (error) {
-          console.error('❌ Failed to configure audio mode:', error);
-          setVoiceModeEnabled(false);
-        }
+      // Enhanced audio configuration for TV environments to prevent echo
+      try {
+        await Audio.setAudioModeAsync({
+          allowsRecordingIOS: true,
+          playsInSilentModeIOS: true,
+          staysActiveInBackground: true,
+          shouldDuckAndroid: true, // Duck other audio when recording
+          playThroughEarpieceAndroid: false, // Use speakers for TV
+          // Additional TV-specific settings
+          interruptionModeIOS: Audio.INTERRUPTION_MODE_IOS_DO_NOT_MIX,
+          interruptionModeAndroid: Audio.INTERRUPTION_MODE_ANDROID_DO_NOT_MIX,
+        });
+        console.log('✅ Enhanced audio mode configured for TV echo prevention');
+      } catch (error) {
+        console.error('❌ Failed to configure enhanced audio mode:', error);
+        setVoiceModeEnabled(false);
+      }
     };
 
     setupAudio();
@@ -93,27 +107,27 @@ export default function Guide({ onSessionEnd, userId, therapistName }: GuideProp
       setConnected(true);
     });
     
-    // Start always-on listening after a brief delay
+    // Start always-on listening after a longer delay to ensure audio setup is complete
     setTimeout(() => {
       if (voiceModeEnabled && conversationMode === 'always_on') {
         console.log('🚀 Initial setup: Starting always-on listening...');
         startAlwaysOnListening();
       }
-    }, 3000);
+    }, 5000); // Increased delay for better audio setup
 
     // Set up periodic microphone health check for always-on mode
     const microphoneHealthCheck = setInterval(() => {
-      if (conversationMode === 'always_on' && voiceModeEnabled && !avatarSpeaking && !micPausedForAvatar && !isRecording) {
+      if (conversationMode === 'always_on' && voiceModeEnabled && !avatarSpeaking && !micPausedForAvatar && !isRecording && !isInEchoCooldown) {
         console.log('🔍 Health check: Ensuring microphone is active...');
         startAlwaysOnListening();
       }
-    }, 10000); // Check every 10 seconds
+    }, 15000); // Increased interval to 15 seconds to reduce conflicts
     
     // Set up avatar speaking timeout check
     const avatarSpeakingTimeoutCheck = setInterval(() => {
       if (avatarSpeaking && avatarSpeakingStartTime) {
         const speakingDuration = Date.now() - avatarSpeakingStartTime;
-        const maxSpeakingTime = 30000; // 30 seconds max
+        const maxSpeakingTime = 45000; // Increased to 45 seconds max
         
         if (speakingDuration > maxSpeakingTime) {
           console.log('⏰ Avatar speaking timeout - resetting state');
@@ -122,10 +136,14 @@ export default function Guide({ onSessionEnd, userId, therapistName }: GuideProp
           setAvatarSpeakingStartTime(null);
           setSpeaking(false);
           
-          // Resume listening if needed
+          // Resume listening if needed with longer cooldown
           if (conversationMode === 'always_on' && voiceModeEnabled && !isRecording) {
-            console.log('🔄 Resuming listening after timeout');
-            startAlwaysOnListening();
+            console.log('🔄 Resuming listening after timeout with cooldown');
+            setTimeout(() => {
+              if (!avatarSpeaking && !micPausedForAvatar && !isInEchoCooldown) {
+                startAlwaysOnListening();
+              }
+            }, micCooldownPeriod);
           }
         }
       }
@@ -143,12 +161,29 @@ export default function Guide({ onSessionEnd, userId, therapistName }: GuideProp
     };
   }, []);
 
+  // Enhanced echo prevention function
+  const isInEchoCooldownPeriod = () => {
+    const timeSinceLastAvatarSpeech = Date.now() - lastAvatarSpeechEnd;
+    return timeSinceLastAvatarSpeech < micCooldownPeriod;
+  };
+
+  // Simple debug logging function for UI
+  const addDebugLog = (message: string) => {
+    const timestamp = new Date().toLocaleTimeString();
+    const logEntry = `[${timestamp}] ${message}`;
+    console.log(logEntry);
+    // Only keep logs in console, not in UI for simplicity
+  };
+
   // Speech recognition event handlers
   useSpeechRecognitionEvent("start", () => {
     console.log('🎤 SPEECH RECOGNITION STARTED');
     console.log(`📊 Mode: ${conversationMode}, Voice Enabled: ${voiceModeEnabled}`);
+    console.log(`🛡️ Echo Cooldown: ${isInEchoCooldownPeriod() ? 'ACTIVE' : 'INACTIVE'}`);
     setIsRecording(true);
     setIsListening(true);
+    setMicStatus('ON');
+    addDebugLog('🎤 MICROPHONE TURNED ON');
   });
 
   useSpeechRecognitionEvent("audiostart", () => {
@@ -165,35 +200,52 @@ export default function Guide({ onSessionEnd, userId, therapistName }: GuideProp
     setIsRecording(false);
     setIsListening(false);
     
-    // CRITICAL: Don't restart if avatar is speaking to prevent echo
-    if (avatarSpeaking || micPausedForAvatar) {
-      console.log('🚫 ECHO PREVENTION: Not restarting while avatar is speaking');
+    // Enhanced echo prevention: check cooldown period
+    if (isInEchoCooldownPeriod()) {
+      console.log('🚫 ECHO PREVENTION: In cooldown period, not restarting');
+      setMicStatus('COOLDOWN');
+      addDebugLog('🚫 MICROPHONE IN COOLDOWN - NOT RESTARTING');
       return;
     }
     
+    // CRITICAL: Don't restart if avatar is speaking to prevent echo
+    if (avatarSpeaking || micPausedForAvatar) {
+      console.log('🚫 ECHO PREVENTION: Not restarting while avatar is speaking');
+      setMicStatus('PAUSED');
+      addDebugLog('🚫 MICROPHONE PAUSED - AVATAR SPEAKING');
+      return;
+    }
+    
+    setMicStatus('OFF');
+    addDebugLog('🛑 MICROPHONE TURNED OFF');
+    
     // Always restart for always-on mode unless avatar is speaking
-    if (conversationMode === 'always_on' && isAlwaysListening && !avatarSpeaking && !micPausedForAvatar && voiceModeEnabled) {
-      console.log('🔄 ALWAYS-ON: Restarting microphone immediately...');
+    if (conversationMode === 'always_on' && isAlwaysListening && !avatarSpeaking && !micPausedForAvatar && voiceModeEnabled && !isInEchoCooldownPeriod()) {
+      console.log('🔄 ALWAYS-ON: Restarting microphone after cooldown check...');
+      addDebugLog('🔄 SCHEDULING MICROPHONE RESTART (500ms)');
       setTimeout(() => {
-        if (!avatarSpeaking && !micPausedForAvatar && conversationMode === 'always_on') {
+        if (!avatarSpeaking && !micPausedForAvatar && !isInEchoCooldownPeriod() && conversationMode === 'always_on') {
           console.log('🎤 ALWAYS-ON: Starting new listening session...');
           startAlwaysOnListening();
         } else {
-          console.log('🚫 ALWAYS-ON: Skipping restart - avatar speaking or mic paused');
+          console.log('🚫 ALWAYS-ON: Skipping restart - conditions not met');
+          addDebugLog('🚫 SKIPPING RESTART - CONDITIONS NOT MET');
         }
-      }, 100); // Very short delay
+      }, 500); // Increased delay for better echo prevention
     }
-    // In continuous mode, restart listening after a brief pause if not speaking
-    else if (conversationMode === 'continuous' && !speaking && voiceModeEnabled) {
-      console.log('⏰ Scheduling restart in 1 second...');
+    // In continuous mode, restart listening after a longer pause if not speaking
+    else if (conversationMode === 'continuous' && !speaking && voiceModeEnabled && !isInEchoCooldownPeriod()) {
+      console.log('⏰ Scheduling restart in 2 seconds...');
+      addDebugLog('🔄 SCHEDULING MICROPHONE RESTART (2s)');
       setTimeout(() => {
-        if (!speaking) {
+        if (!speaking && !isInEchoCooldownPeriod()) {
           console.log('🔄 Auto-restarting continuous listening...');
           startContinuousListening();
         } else {
-          console.log('🚫 Skipping restart - AI is speaking');
+          console.log('🚫 Skipping restart - AI is speaking or in cooldown');
+          addDebugLog('🚫 SKIPPING RESTART - AI SPEAKING OR COOLDOWN');
         }
-      }, 1000);
+      }, 2000); // Increased delay
     }
   });
 
@@ -206,29 +258,29 @@ export default function Guide({ onSessionEnd, userId, therapistName }: GuideProp
     setIsListening(false);
     setRecognizedText('');
     
-    // In always-on mode, try to restart after error if avatar not speaking
-    if (conversationMode === 'always_on' && isAlwaysListening && !avatarSpeaking && voiceModeEnabled) {
-      console.log('⏰ ALWAYS-ON: Scheduling error recovery restart in 500ms...');
+    // In always-on mode, try to restart after error if avatar not speaking and not in cooldown
+    if (conversationMode === 'always_on' && isAlwaysListening && !avatarSpeaking && voiceModeEnabled && !isInEchoCooldownPeriod()) {
+      console.log('⏰ ALWAYS-ON: Scheduling error recovery restart in 1000ms...');
       setTimeout(() => {
-        if (!avatarSpeaking && !micPausedForAvatar && isAlwaysListening && conversationMode === 'always_on') {
+        if (!avatarSpeaking && !micPausedForAvatar && isAlwaysListening && conversationMode === 'always_on' && !isInEchoCooldownPeriod()) {
           console.log('🔄 ALWAYS-ON: Attempting error recovery restart...');
           startAlwaysOnListening();
         } else {
-          console.log('🚫 ALWAYS-ON: Skipping error recovery - avatar is speaking');
+          console.log('🚫 ALWAYS-ON: Skipping error recovery - conditions not met');
         }
-      }, 500);
+      }, 1000); // Increased delay
     }
     // In continuous mode, try to restart after error
-    else if (conversationMode === 'continuous' && voiceModeEnabled) {
-      console.log('⏰ Scheduling error recovery restart in 2 seconds...');
+    else if (conversationMode === 'continuous' && voiceModeEnabled && !isInEchoCooldownPeriod()) {
+      console.log('⏰ Scheduling error recovery restart in 3 seconds...');
       setTimeout(() => {
-        if (!speaking) {
+        if (!speaking && !isInEchoCooldownPeriod()) {
           console.log('🔄 Attempting error recovery restart...');
           startContinuousListening();
         } else {
-          console.log('🚫 Skipping error recovery - AI is speaking');
+          console.log('🚫 Skipping error recovery - AI is speaking or in cooldown');
         }
-      }, 2000);
+      }, 3000); // Increased delay
     }
   });
 
@@ -236,6 +288,12 @@ export default function Guide({ onSessionEnd, userId, therapistName }: GuideProp
     console.log('🗣️ SPEECH RESULT RECEIVED:');
     console.log(`   Results count: ${event.results?.length || 0}`);
     console.log(`   Is Final: ${event.isFinal}`);
+    
+    // Enhanced echo prevention: check cooldown period first
+    if (isInEchoCooldownPeriod()) {
+      console.log('🚫 ECHO PREVENTION: In cooldown period, ignoring speech');
+      return;
+    }
     
     // CRITICAL: Don't process speech when avatar is speaking to prevent echo
     if (echoPreventionEnabled && (avatarSpeaking || micPausedForAvatar)) {
@@ -255,18 +313,20 @@ export default function Guide({ onSessionEnd, userId, therapistName }: GuideProp
       console.log(`   Length: ${transcribedText.length} characters`);
       console.log(`   Is Final: ${event.isFinal ? 'YES' : 'NO (interim)'}`);
       
-      // Echo detection: check for common avatar speech patterns (less aggressive)
+      // Enhanced echo detection: check for common avatar speech patterns
       if (echoPreventionEnabled && avatarSpeaking) {
         const lowerText = transcribedText.toLowerCase();
         const isLikelyEcho = (
           (lowerText.includes('hello') && lowerText.includes('therapist')) ||
           (lowerText.includes('how are you feeling') && lowerText.includes('today')) ||
           (lowerText.includes('therapy session') && lowerText.includes('i\'m here')) ||
-          (confidence && confidence < 0.2) // Very low confidence might indicate echo
+          (lowerText.includes('thank you') && lowerText.includes('sharing')) ||
+          (lowerText.includes('that sounds') && lowerText.includes('difficult')) ||
+          (confidence && confidence < 0.3) // Increased threshold for better detection
         );
         
         if (isLikelyEcho) {
-          console.log('🚫 ECHO DETECTION: Likely avatar speech detected, ignoring');
+          console.log('🚫 ENHANCED ECHO DETECTION: Likely avatar speech detected, ignoring');
           setRecognizedText(''); // Clear any pending text
           return;
         }
@@ -293,40 +353,7 @@ export default function Guide({ onSessionEnd, userId, therapistName }: GuideProp
     }
   });
 
-  // Handle speech recognition errors
-  useSpeechRecognitionEvent("error", (event) => {
-    console.error('❌ SPEECH RECOGNITION ERROR:', event);
-    
-    // Handle specific error types
-    if (event.error === 'no-speech') {
-      console.log('🔄 No speech detected - this is normal, will restart automatically');
-      // Don't treat no-speech as an error for always-on mode
-      return;
-    }
-    
-    if (event.error === 'network') {
-      console.error('🌐 Network error - check internet connection');
-      Alert.alert('Network Error', 'Speech recognition requires internet connection. Please check your network.');
-    }
-    
-    if (event.error === 'not-allowed') {
-      console.error('🚫 Permission denied');
-      Alert.alert('Permission Denied', 'Microphone permission is required for voice chat.');
-      setVoiceModeEnabled(false);
-    }
-    
-    // For other errors, try to restart
-    if (conversationMode === 'always_on' && voiceModeEnabled) {
-      console.log('🔄 Attempting to restart speech recognition after error...');
-      setTimeout(() => {
-        if (!avatarSpeaking && !micPausedForAvatar) {
-          startAlwaysOnListening();
-        }
-      }, 2000);
-    }
-  });
-
-  // Audio level monitoring for voice activity detection and echo prevention
+  // Enhanced audio level monitoring for voice activity detection and echo prevention
   useSpeechRecognitionEvent("volumechange", (event) => {
     if (event.value !== undefined) {
       // Only log significant audio level changes to avoid spam
@@ -335,15 +362,19 @@ export default function Guide({ onSessionEnd, userId, therapistName }: GuideProp
       }
       setAudioLevel(event.value);
       
-      // Echo prevention: if audio level is high and avatar is speaking, it might be echo
-      if (echoPreventionEnabled && event.value > 0.5 && avatarSpeaking) {
-        console.log('🚫 ECHO DETECTION: High audio level during avatar speech - possible echo');
-        // Don't process this audio
+      // Enhanced echo prevention: if audio level is high and avatar is speaking, it might be echo
+      if (echoPreventionEnabled && event.value > echoDetectionThreshold && avatarSpeaking) {
+        console.log('🚫 ENHANCED ECHO DETECTION: High audio level during avatar speech - possible echo');
+        // Stop processing this audio and enter cooldown
+        setIsInEchoCooldown(true);
+        setTimeout(() => {
+          setIsInEchoCooldown(false);
+        }, micCooldownPeriod);
         return;
       }
       
       // Auto-resume microphone if audio level is high but not listening (for natural conversation)
-      if (event.value > 0.3 && !isListening && conversationMode === 'always_on' && !avatarSpeaking && !micPausedForAvatar) {
+      if (event.value > 0.3 && !isListening && conversationMode === 'always_on' && !avatarSpeaking && !micPausedForAvatar && !isInEchoCooldownPeriod()) {
         console.log('🎤 High audio level detected - ensuring microphone is active...');
         startAlwaysOnListening();
       }
@@ -459,7 +490,7 @@ export default function Guide({ onSessionEnd, userId, therapistName }: GuideProp
 
         const ws = new WebSocket(wsUrl);
         
-        // Set up WebSocket message handling to prevent echo
+        // Enhanced WebSocket message handling to prevent echo
         ws.onmessage = (event) => {
           try {
             const data = JSON.parse(event.data);
@@ -467,53 +498,70 @@ export default function Guide({ onSessionEnd, userId, therapistName }: GuideProp
             
             // Handle avatar speaking events to prevent echo
             if (data.type === 'avatar_speaking' || data.type === 'speech_start' || data.event === 'avatar_speaking') {
-              console.log('🗣️ Avatar started speaking - pausing microphone');
+              console.log('🗣️ Avatar started speaking - pausing microphone with enhanced echo prevention');
               setAvatarSpeaking(true);
               setMicPausedForAvatar(true);
               setAvatarSpeakingStartTime(Date.now());
+              setMicStatus('PAUSED');
+              addDebugLog('🗣️ AVATAR STARTED SPEAKING - MICROPHONE PAUSED');
               
               // Stop speech recognition immediately if echo prevention is enabled
               if (echoPreventionEnabled && isRecording) {
                 console.log('🛑 Stopping speech recognition due to avatar speaking');
-                ExpoSpeechRecognitionModule.stop();
-                setIsRecording(false);
-                setIsListening(false);
+                addDebugLog('🛑 STOPPING SPEECH RECOGNITION - AVATAR SPEAKING');
+                try {
+                  ExpoSpeechRecognitionModule.stop();
+                  setIsRecording(false);
+                  setIsListening(false);
+                  setRecognizedText(''); // Clear any pending speech
+                } catch (error) {
+                  console.error('❌ Error stopping speech recognition:', error);
+                  addDebugLog('❌ ERROR STOPPING SPEECH RECOGNITION');
+                }
               }
             }
             
-            // Handle avatar finished speaking events
+            // Handle avatar finished speaking events with enhanced cooldown
             if (data.type === 'avatar_finished' || data.type === 'speech_end' || data.event === 'avatar_finished') {
-              console.log('✅ Avatar finished speaking - resuming microphone');
+              console.log('✅ Avatar finished speaking - entering cooldown period');
               setAvatarSpeaking(false);
               setMicPausedForAvatar(false);
               setAvatarSpeakingStartTime(null);
+              setLastAvatarSpeechEnd(Date.now());
+              setMicStatus('COOLDOWN');
+              addDebugLog('✅ AVATAR FINISHED SPEAKING - ENTERING COOLDOWN');
               
-              // Resume listening after a delay to prevent echo
+              // Enhanced echo prevention: longer cooldown period
               if (echoPreventionEnabled) {
+                console.log(`⏱️ Starting ${micCooldownPeriod}ms echo cooldown period`);
+                addDebugLog(`⏱️ STARTING ${micCooldownPeriod}ms ECHO COOLDOWN`);
                 setTimeout(() => {
-                  if (conversationMode === 'always_on' && voiceModeEnabled && !isRecording) {
-                    console.log('🔄 Resuming listening after avatar speech');
+                  if (conversationMode === 'always_on' && voiceModeEnabled && !isRecording && !avatarSpeaking) {
+                    console.log('🔄 Resuming listening after echo cooldown period');
+                    addDebugLog('🔄 RESUMING LISTENING AFTER COOLDOWN');
                     startAlwaysOnListening();
                   }
-                }, 1000);
+                }, micCooldownPeriod);
               }
             }
             
-            // Handle task completion events
+            // Handle task completion events with enhanced cooldown
             if (data.type === 'task_completed' || data.event === 'task_completed') {
               console.log('✅ Task completed - avatar should be finished speaking');
               setAvatarSpeaking(false);
               setMicPausedForAvatar(false);
               setSpeaking(false);
+              setLastAvatarSpeechEnd(Date.now());
               
-              // Resume listening after a delay
+              // Enhanced echo prevention: longer cooldown period
               if (echoPreventionEnabled) {
+                console.log(`⏱️ Starting ${micCooldownPeriod}ms echo cooldown period after task completion`);
                 setTimeout(() => {
-                  if (conversationMode === 'always_on' && voiceModeEnabled && !isRecording) {
-                    console.log('🔄 Resuming listening after task completion');
+                  if (conversationMode === 'always_on' && voiceModeEnabled && !isRecording && !avatarSpeaking) {
+                    console.log('🔄 Resuming listening after task completion cooldown');
                     startAlwaysOnListening();
                   }
-                }, 1000);
+                }, micCooldownPeriod);
               }
             }
             
@@ -738,8 +786,10 @@ export default function Guide({ onSessionEnd, userId, therapistName }: GuideProp
     console.log(`   Mic Paused for Avatar: ${micPausedForAvatar}`);
     console.log(`   Recording: ${isRecording}`);
     console.log(`   Always Listening: ${isAlwaysListening}`);
+    console.log(`   Echo Cooldown: ${isInEchoCooldownPeriod() ? 'ACTIVE' : 'INACTIVE'}`);
+    console.log(`   In Echo Cooldown: ${isInEchoCooldown ? 'YES' : 'NO'}`);
     
-    if (conversationMode === 'always_on' && voiceModeEnabled && !avatarSpeaking && !micPausedForAvatar && !isRecording && isAlwaysListening) {
+    if (conversationMode === 'always_on' && voiceModeEnabled && !avatarSpeaking && !micPausedForAvatar && !isRecording && isAlwaysListening && !isInEchoCooldownPeriod() && !isInEchoCooldown) {
       console.log('✅ ALWAYS-ON CONDITIONS MET - STARTING LISTENING...');
       
       try {
@@ -748,18 +798,20 @@ export default function Guide({ onSessionEnd, userId, therapistName }: GuideProp
         console.log('✅ Always-on listening started');
       } catch (error) {
         console.error('❌ Failed to start always-on listening:', error);
-        // Try again after a short delay
+        // Try again after a longer delay for better echo prevention
         setTimeout(() => {
-          if (conversationMode === 'always_on' && voiceModeEnabled) {
+          if (conversationMode === 'always_on' && voiceModeEnabled && !isInEchoCooldownPeriod()) {
             console.log('🔄 Retrying always-on listening...');
             startAlwaysOnListening();
           }
-        }, 1000);
+        }, 2000); // Increased delay
       }
     } else {
       console.log('🚫 ALWAYS-ON CONDITIONS NOT MET - SKIPPING');
       if (avatarSpeaking) console.log('   Reason: Avatar is speaking');
       if (micPausedForAvatar) console.log('   Reason: Mic paused for avatar');
+      if (isInEchoCooldownPeriod()) console.log('   Reason: In echo cooldown period');
+      if (isInEchoCooldown) console.log('   Reason: In echo cooldown state');
     }
   };
 
@@ -807,9 +859,9 @@ export default function Guide({ onSessionEnd, userId, therapistName }: GuideProp
       console.log('🎤 Setting speaking state...');
       setSpeaking(true);
       
-      // Only pause microphone if echo prevention is enabled
+      // Enhanced echo prevention: pause microphone immediately
       if (echoPreventionEnabled) {
-        console.log('🎤 Echo prevention enabled - pausing microphone...');
+        console.log('🎤 Enhanced echo prevention enabled - pausing microphone...');
         setAvatarSpeaking(true);
         setMicPausedForAvatar(true);
         
@@ -825,6 +877,12 @@ export default function Guide({ onSessionEnd, userId, therapistName }: GuideProp
             console.error('❌ Error stopping speech recognition:', error);
           }
         }
+        
+        // Set cooldown period immediately
+        setIsInEchoCooldown(true);
+        setTimeout(() => {
+          setIsInEchoCooldown(false);
+        }, micCooldownPeriod);
       }
       
       // Clear any interim results
@@ -855,25 +913,28 @@ export default function Guide({ onSessionEnd, userId, therapistName }: GuideProp
       console.log('🗣️ Avatar will start speaking now...');
       setText(""); // Clear any text input
       
-      // Auto-resume microphone after a reasonable delay if WebSocket events don't fire
+      // Enhanced auto-resume microphone with longer delay and cooldown consideration
       if (echoPreventionEnabled) {
         const estimatedWords = transcribedText.length / 5;
-        const estimatedSpeakingTime = Math.max(3000, (estimatedWords / 120) * 60 * 1000);
-        const bufferTime = 2000; // extra buffer time
-        const totalWaitTime = estimatedSpeakingTime + bufferTime;
+        const estimatedSpeakingTime = Math.max(5000, (estimatedWords / 120) * 60 * 1000); // Increased minimum time
+        const bufferTime = 3000; // Increased buffer time
+        const totalWaitTime = estimatedSpeakingTime + bufferTime + micCooldownPeriod; // Include cooldown period
         
-        console.log(`⏱️ Auto-resume timer: ${Math.round(totalWaitTime/1000)}s`);
+        console.log(`⏱️ Enhanced auto-resume timer: ${Math.round(totalWaitTime/1000)}s (includes ${micCooldownPeriod/1000}s cooldown)`);
         
         setTimeout(() => {
-          console.log('⏱️ Auto-resume timer fired - resetting avatar speaking state');
+          console.log('⏱️ Enhanced auto-resume timer fired - resetting avatar speaking state');
           setAvatarSpeaking(false);
           setSpeaking(false);
           setMicPausedForAvatar(false);
+          setLastAvatarSpeechEnd(Date.now());
           
-          // Resume listening if needed
-          if (conversationMode === 'always_on' && voiceModeEnabled && !isRecording) {
-            console.log('🔄 Auto-resuming listening after timer');
+          // Resume listening if needed with additional cooldown check
+          if (conversationMode === 'always_on' && voiceModeEnabled && !isRecording && !isInEchoCooldownPeriod()) {
+            console.log('🔄 Enhanced auto-resuming listening after timer and cooldown');
             startAlwaysOnListening();
+          } else {
+            console.log('🚫 Skipping auto-resume - conditions not met or in cooldown');
           }
         }, totalWaitTime);
       }
@@ -884,33 +945,37 @@ export default function Guide({ onSessionEnd, userId, therapistName }: GuideProp
       setAvatarSpeaking(false);
       setSpeaking(false);
       setMicPausedForAvatar(false);
+      setIsInEchoCooldown(false);
     }
   };
 
-  // Function to handle when avatar finishes speaking
+  // Enhanced function to handle when avatar finishes speaking
   const onAvatarFinishedSpeaking = () => {
-    console.log('✅ AVATAR FINISHED SPEAKING');
+    console.log('✅ AVATAR FINISHED SPEAKING - Enhanced echo prevention');
     setAvatarSpeaking(false);
     setSpeaking(false);
+    setLastAvatarSpeechEnd(Date.now());
     
-    // Resume microphone with longer delay to ensure echo prevention
+    // Enhanced resume microphone with cooldown period
     if (conversationMode === 'always_on' && micPausedForAvatar && voiceModeEnabled) {
-      console.log('🎤 ALWAYS-ON: Resuming microphone after avatar speech...');
+      console.log('🎤 ALWAYS-ON: Resuming microphone after avatar speech with cooldown...');
       setMicPausedForAvatar(false);
       
-      // Longer delay to ensure avatar audio completely finishes
+      // Enhanced delay with cooldown period to ensure echo prevention
       setTimeout(() => {
-        if (!avatarSpeaking && conversationMode === 'always_on' && !isRecording) {
-          console.log('🔄 ALWAYS-ON: Restarting listening after echo-safe delay...');
+        if (!avatarSpeaking && conversationMode === 'always_on' && !isRecording && !isInEchoCooldownPeriod()) {
+          console.log('🔄 ALWAYS-ON: Restarting listening after enhanced echo-safe delay...');
           startAlwaysOnListening();
         } else {
-          console.log('🚫 ALWAYS-ON: Skipping restart - conditions not met');
+          console.log('🚫 ALWAYS-ON: Skipping restart - conditions not met or in cooldown');
         }
-      }, 1000); // Increased delay to 1 second for better echo prevention
-    } else if (conversationMode === 'continuous' && voiceModeEnabled) {
+      }, micCooldownPeriod); // Use cooldown period for better echo prevention
+    } else if (conversationMode === 'continuous' && voiceModeEnabled && !isInEchoCooldownPeriod()) {
       setTimeout(() => {
-        startContinuousListening();
-      }, 1000);
+        if (!isInEchoCooldownPeriod()) {
+          startContinuousListening();
+        }
+      }, micCooldownPeriod);
     }
   };
 
@@ -997,6 +1062,11 @@ export default function Guide({ onSessionEnd, userId, therapistName }: GuideProp
       <RoomView
         onClose={closeSession}
         loading={loading}
+        showDebugPanel={showDebugPanel}
+        setShowDebugPanel={setShowDebugPanel}
+        micStatus={micStatus}
+        recognizedText={recognizedText}
+        avatarSpeaking={avatarSpeaking}
       />
     </LiveKitRoom>
   );
@@ -1005,9 +1075,19 @@ export default function Guide({ onSessionEnd, userId, therapistName }: GuideProp
 const RoomView = ({
   onClose,
   loading,
+  showDebugPanel,
+  setShowDebugPanel,
+  micStatus,
+  recognizedText,
+  avatarSpeaking,
 }: {
   onClose: () => void;
   loading: boolean;
+  showDebugPanel: boolean;
+  setShowDebugPanel: (show: boolean) => void;
+  micStatus: 'ON' | 'OFF' | 'PAUSED' | 'COOLDOWN';
+  recognizedText: string;
+  avatarSpeaking: boolean;
 }) => {
   const tracks = useTracks([Track.Source.Camera], { onlySubscribed: true });
 
@@ -1025,6 +1105,53 @@ const RoomView = ({
           ) : null
         )}
       </View>
+      
+      {/* Simple Debug Panel */}
+      {showDebugPanel && (
+        <View style={styles.debugPanel}>
+          <View style={styles.debugHeader}>
+            <Text style={styles.debugTitle}>🎤 Debug</Text>
+            <TouchableOpacity onPress={() => setShowDebugPanel(false)}>
+              <Text style={styles.debugCloseButton}>✕</Text>
+            </TouchableOpacity>
+          </View>
+          
+          {/* Simple Status */}
+          <View style={styles.simpleStatusRow}>
+            <View style={[styles.simpleStatus, micStatus === 'ON' ? styles.statusOn : styles.statusOff]}>
+              <Text style={styles.simpleStatusText}>
+                MIC: {micStatus === 'ON' ? 'ON' : 'OFF'}
+              </Text>
+            </View>
+            
+            <View style={[styles.simpleStatus, avatarSpeaking ? styles.statusOn : styles.statusOff]}>
+              <Text style={styles.simpleStatusText}>
+                AVATAR: {avatarSpeaking ? 'SPEAKING' : 'SILENT'}
+              </Text>
+            </View>
+          </View>
+          
+          {/* Last Recognized Text */}
+          {recognizedText && (
+            <View style={styles.simpleRecognizedContainer}>
+              <Text style={styles.simpleRecognizedText}>
+                "{recognizedText}"
+              </Text>
+            </View>
+          )}
+        </View>
+      )}
+      
+      {/* Debug Toggle Button */}
+      <TouchableOpacity
+        style={styles.debugToggleButton}
+        onPress={() => setShowDebugPanel(!showDebugPanel)}
+      >
+        <Text style={styles.debugToggleText}>
+          {showDebugPanel ? 'Hide Debug' : 'Show Debug'}
+        </Text>
+      </TouchableOpacity>
+      
       {/* Hidden close button for emergency use only */}
       <TouchableOpacity
         style={[styles.hiddenCloseButton, loading && styles.disabledButton]}
@@ -1374,5 +1501,81 @@ const styles = StyleSheet.create({
     fontSize: 12,
     color: "#666",
     marginBottom: 5,
+  },
+  // Simple Debug Panel Styles
+  debugPanel: {
+    position: 'absolute',
+    top: 100,
+    left: 20,
+    right: 20,
+    backgroundColor: 'rgba(0, 0, 0, 0.8)',
+    borderRadius: 10,
+    padding: 15,
+    zIndex: 1000,
+  },
+  debugHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 10,
+  },
+  debugTitle: {
+    color: '#FFF',
+    fontSize: 16,
+    fontWeight: '600',
+  },
+  debugCloseButton: {
+    color: '#FFF',
+    fontSize: 18,
+    fontWeight: '600',
+  },
+  simpleStatusRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    marginBottom: 10,
+  },
+  simpleStatus: {
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    borderRadius: 5,
+    minWidth: 100,
+    alignItems: 'center',
+  },
+  statusOn: {
+    backgroundColor: 'rgba(76, 175, 80, 0.8)', // Green
+  },
+  statusOff: {
+    backgroundColor: 'rgba(244, 67, 54, 0.8)', // Red
+  },
+  simpleStatusText: {
+    color: '#FFF',
+    fontSize: 12,
+    fontWeight: '600',
+  },
+  simpleRecognizedContainer: {
+    backgroundColor: 'rgba(255, 255, 255, 0.1)',
+    padding: 8,
+    borderRadius: 5,
+  },
+  simpleRecognizedText: {
+    color: '#FFF',
+    fontSize: 14,
+    fontStyle: 'italic',
+    textAlign: 'center',
+  },
+  debugToggleButton: {
+    position: 'absolute',
+    top: 50,
+    left: 20,
+    backgroundColor: 'rgba(166, 123, 91, 0.8)',
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    borderRadius: 15,
+    zIndex: 1001,
+  },
+  debugToggleText: {
+    color: '#FFF',
+    fontSize: 12,
+    fontWeight: '600',
   },
 });
