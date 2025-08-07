@@ -1,6 +1,6 @@
 {
   "expo": {
-    "version": "1.1.0",
+    "version": "1.1.1",
     "scheme": "routertv",
     "plugins": [
       "@livekit/react-native-expo-plugin",
@@ -53,7 +53,7 @@
       ]
     ],
     "android": {
-      "versionCode": 11,
+      "versionCode": 12,
       "icon": "./assets/therapod_icon.png",
       "adaptiveIcon": {
         "foregroundImage": "./assets/therapod_icon.png",

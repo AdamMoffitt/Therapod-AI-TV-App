@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useState, useRef } from "react";
 import {
   StyleSheet,
   View,
@@ -40,9 +40,10 @@ interface GuideProps {
   onSessionEnd?: () => void;
   userId?: string | null;
   therapistName?: string | null;
+  therapistId?: string | null;
 }
 
-export default function Guide({ onSessionEnd, userId, therapistName }: GuideProps) {
+export default function Guide({ onSessionEnd, userId, therapistName, therapistId }: GuideProps) {
   const [wsUrl, setWsUrl] = useState<string>("");
   const [token, setToken] = useState<string>("");
   const [sessionToken, setSessionToken] = useState<string>("");
@@ -64,6 +65,250 @@ export default function Guide({ onSessionEnd, userId, therapistName }: GuideProp
   const [echoPreventionEnabled, setEchoPreventionEnabled] = useState(true);
   const [avatarSpeakingStartTime, setAvatarSpeakingStartTime] = useState<number | null>(null);
   const [sessionInitialized, setSessionInitialized] = useState(false);
+
+  // Inactivity detection state
+  const [lastUserActivity, setLastUserActivity] = useState<number>(Date.now());
+  const [inactivityCheckSent, setInactivityCheckSent] = useState<boolean>(false);
+  const [finalWarningSent, setFinalWarningSent] = useState<boolean>(false);
+  const inactivityTimerRef = useRef<NodeJS.Timeout | null>(null);
+  const finalWarningTimerRef = useRef<NodeJS.Timeout | null>(null);
+
+  // Helper functions to get user data
+  const getUserId = () => {
+    return userId || null;
+  };
+
+  const getTherapistId = () => {
+    return therapistId || "N6j3amuwz99kyJdOma4b";
+  };
+
+  const getSessionId = () => {
+    return sessionId || null;
+  };
+
+  // Function to reset inactivity timers when user speaks
+  const resetInactivityTimers = () => {
+    console.log('🔄 User activity detected - resetting inactivity timers');
+    setLastUserActivity(Date.now());
+    setInactivityCheckSent(false);
+    setFinalWarningSent(false);
+    
+    // Clear existing timers
+    if (inactivityTimerRef.current) {
+      clearTimeout(inactivityTimerRef.current);
+      inactivityTimerRef.current = null;
+    }
+    if (finalWarningTimerRef.current) {
+      clearTimeout(finalWarningTimerRef.current);
+      finalWarningTimerRef.current = null;
+    }
+    
+    // Start new inactivity timer
+    startInactivityTimer();
+  };
+
+  // Function to start inactivity timer
+  const startInactivityTimer = () => {
+    console.log('⏰ Starting inactivity timer (30 seconds)');
+    inactivityTimerRef.current = setTimeout(() => {
+      if (!inactivityCheckSent) {
+        sendInactivityCheck();
+      }
+    }, 30000); // 30 seconds
+  };
+
+  // Function to send first inactivity check
+  const sendInactivityCheck = async () => {
+    try {
+      console.log('🤔 User inactive for 30 seconds - sending check-in message');
+      setInactivityCheckSent(true);
+      
+      const checkInMessage = "Hey there, haven't heard from you in a while, are you still there?";
+      
+      const response = await fetch(`${API_CONFIG.serverUrl}/v1/streaming.task`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${sessionToken}`,
+        },
+        body: JSON.stringify({
+          session_id: sessionId,
+          text: checkInMessage,
+          task_type: "talk",
+        }),
+      });
+      
+      const data = await response.json();
+      console.log("Inactivity check sent:", data);
+      
+      // Start final warning timer
+      finalWarningTimerRef.current = setTimeout(() => {
+        if (!finalWarningSent) {
+          sendFinalWarning();
+        }
+      }, 30000); // Another 30 seconds
+      
+    } catch (error) {
+      console.error("Error sending inactivity check:", error);
+    }
+  };
+
+  // Function to send final warning and end session
+  const sendFinalWarning = async () => {
+    try {
+      console.log('⚠️ User inactive for 60 seconds - sending final warning and ending session');
+      setFinalWarningSent(true);
+      
+      const finalWarningMessage = "I haven't heard from you in a while, going to end the session now. Look forward to talking again soon.";
+      
+      const response = await fetch(`${API_CONFIG.serverUrl}/v1/streaming.task`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${sessionToken}`,
+        },
+        body: JSON.stringify({
+          session_id: sessionId,
+          text: finalWarningMessage,
+          task_type: "talk",
+        }),
+      });
+      
+      const data = await response.json();
+      console.log("Final warning sent:", data);
+      
+      // Wait for final warning to finish, then send ending message
+      setTimeout(async () => {
+        try {
+          console.log('🎬 Sending personalized ending message...');
+          
+          // Fetch personalized ending message from API
+          const endingMessage = await fetchEndingMessage();
+          console.log('🎤 Sending ending message:', endingMessage);
+          
+          const endingResponse = await fetch(`${API_CONFIG.serverUrl}/v1/streaming.task`, {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+              Authorization: `Bearer ${sessionToken}`,
+            },
+            body: JSON.stringify({
+              session_id: sessionId,
+              text: endingMessage,
+              task_type: "talk",
+            }),
+          });
+          
+          const endingData = await endingResponse.json();
+          console.log("Ending message sent:", endingData);
+          
+          // End session after ending message finishes (allow more time for longer message)
+          setTimeout(() => {
+            console.log('🛑 Ending session due to user inactivity - ending message completed');
+            if (onSessionEnd) {
+              onSessionEnd();
+            }
+          }, 8000); // Increased delay to allow for longer ending messages
+          
+        } catch (error) {
+          console.error("Error sending ending message:", error);
+          // End session immediately if ending message fails
+          if (onSessionEnd) {
+            onSessionEnd();
+          }
+        }
+      }, 5000); // Wait 5 seconds for final warning to finish
+      
+    } catch (error) {
+      console.error("Error sending final warning:", error);
+      // End session immediately if error
+      if (onSessionEnd) {
+        onSessionEnd();
+      }
+    }
+  };
+
+  // Cleanup inactivity timers on unmount
+  useEffect(() => {
+    return () => {
+      if (inactivityTimerRef.current) {
+        clearTimeout(inactivityTimerRef.current);
+      }
+      if (finalWarningTimerRef.current) {
+        clearTimeout(finalWarningTimerRef.current);
+      }
+    };
+  }, []);
+
+  const fetchWelcomeMessage = async () => {
+    try {
+      const userId = getUserId();
+      const therapistId = getTherapistId();
+      const sessionId = getSessionId();
+      console.log('🔍 Fetching welcome message for user:', userId, 'therapist:', therapistId, 'session:', sessionId);
+      
+      const response = await fetch('https://api.therapodai.com/welcome-message', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ 
+          user_id: userId,
+          therapist_id: therapistId,
+          session_id: sessionId
+        }),
+      });
+      
+      console.log('📥 Welcome message API response:', { 
+        status: response.status, 
+        ok: response.ok 
+      });
+      
+      if (!response.ok) throw new Error(`HTTP error! status: ${response.status}`);
+      const data = await response.json();
+      console.log('✅ Welcome message received:', data.welcome_message);
+      return data.welcome_message;
+    } catch (error) {
+      console.error('❌ Error fetching welcome message:', error);
+      const fallbackMessage = therapistName 
+        ? `Hello! I'm ${therapistName}, your AI therapist. I'm here for our therapy session. How are you feeling today?`
+        : `Hello! I'm your AI therapist. I'm here for our therapy session. How are you feeling today?`;
+      console.log('📝 Using fallback welcome message:', fallbackMessage);
+      return fallbackMessage;
+    }
+  };
+
+  const fetchEndingMessage = async () => {
+    try {
+      const userId = getUserId();
+      const therapistId = getTherapistId();
+      const sessionId = getSessionId();
+      console.log('🔍 Fetching ending message for user:', userId, 'therapist:', therapistId, 'session:', sessionId);
+      
+      const response = await fetch('https://api.therapodai.com/ending-message', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ 
+          user_id: userId,
+          therapist_id: therapistId,
+          session_id: sessionId
+        }),
+      });
+      
+      console.log('📥 Ending message API response:', { 
+        status: response.status, 
+        ok: response.ok 
+      });
+      
+      if (!response.ok) throw new Error(`HTTP error! status: ${response.status}`);
+      const data = await response.json();
+      console.log('✅ Ending message received:', data.ending_message);
+      return data.ending_message;
+    } catch (error) {
+      console.error('❌ Error fetching ending message:', error);
+      const fallbackMessage = "Thank you for sharing your thoughts with me today. I hope our conversation was helpful. Remember to take care of yourself, and I'll be here whenever you need to talk again. Take care and have a wonderful day!";
+      console.log('📝 Using fallback ending message:', fallbackMessage);
+      return fallbackMessage;
+    }
+  };
 
   // Start audio session and auto-start HeyGen session
   useEffect(() => {
@@ -208,6 +453,7 @@ export default function Guide({ onSessionEnd, userId, therapistName }: GuideProp
     console.log(`📊 Mode: ${conversationMode}, Voice Enabled: ${voiceModeEnabled}`);
     setIsRecording(true);
     setIsListening(true);
+    resetInactivityTimers(); // Reset timers when speech recognition starts
   });
 
   useSpeechRecognitionEvent("audiostart", () => {
@@ -338,6 +584,7 @@ export default function Guide({ onSessionEnd, userId, therapistName }: GuideProp
         // Filter out very short utterances that might be noise
         if (transcribedText.trim().length >= 3) {
           console.log('✅ SENDING FINAL RESULT TO HEYGEN AI');
+          resetInactivityTimers(); // Reset inactivity timers when user speaks
           sendVoiceMessage(transcribedText);
           setRecognizedText(''); // Clear after sending
         } else {
@@ -627,9 +874,9 @@ export default function Guide({ onSessionEnd, userId, therapistName }: GuideProp
             console.log('🎬 Session fully initialized - avatar will start speaking now...');
             setSessionInitialized(true);
             
-            const greetingText = therapistName 
-              ? `Hello! I'm ${therapistName}, your AI therapist. I'm here for our therapy session. How are you feeling today?`
-              : `Hello! I'm your AI therapist. I'm here for our therapy session. How are you feeling today?`;
+            // Fetch personalized welcome message from API
+            const greetingText = await fetchWelcomeMessage();
+            console.log('🎤 Sending personalized welcome message:', greetingText);
               
             const response = await fetch(`${API_CONFIG.serverUrl}/v1/streaming.task`, {
               method: "POST",
@@ -646,6 +893,10 @@ export default function Guide({ onSessionEnd, userId, therapistName }: GuideProp
             
             const data = await response.json();
             console.log("Initial greeting sent:", data);
+            
+            // Start inactivity timer after session is initialized
+            console.log('⏰ Starting inactivity monitoring...');
+            startInactivityTimer();
             
             // Start listening after initial greeting based on mode
             if (conversationMode === 'always_on' && voiceModeEnabled) {
@@ -686,6 +937,9 @@ export default function Guide({ onSessionEnd, userId, therapistName }: GuideProp
   const sendText = async () => {
     try {
       setSpeaking(true);
+      
+      // Reset inactivity timers when user sends text
+      resetInactivityTimers();
 
       // Send task request
       const response = await fetch(
@@ -1029,6 +1283,16 @@ export default function Guide({ onSessionEnd, userId, therapistName }: GuideProp
         setWebSocket(null);
       }
 
+      // Clean up inactivity timers
+      if (inactivityTimerRef.current) {
+        clearTimeout(inactivityTimerRef.current);
+        inactivityTimerRef.current = null;
+      }
+      if (finalWarningTimerRef.current) {
+        clearTimeout(finalWarningTimerRef.current);
+        finalWarningTimerRef.current = null;
+      }
+      
       // Reset all states
       setConnected(false);
       setSessionId("");
@@ -1038,6 +1302,8 @@ export default function Guide({ onSessionEnd, userId, therapistName }: GuideProp
       setText("");
       setSpeaking(false);
       setSessionInitialized(false);
+      setInactivityCheckSent(false);
+      setFinalWarningSent(false);
 
       console.log("Session closed successfully");
       
