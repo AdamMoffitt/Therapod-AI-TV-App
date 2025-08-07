@@ -1,0 +1,127 @@
+{
+  "expo": {
+    "version": "1.1.0",
+    "scheme": "routertv",
+    "plugins": [
+      "@livekit/react-native-expo-plugin",
+      "@config-plugins/react-native-webrtc",
+      [
+        "expo-build-properties",
+        {
+          "ios": {
+            "useFrameworks": "static"
+          }
+        }
+      ],
+      [
+        "expo-speech-recognition",
+        {
+          "microphonePermission": "Allow $(PRODUCT_NAME) to use the microphone.",
+          "speechRecognitionPermission": "Allow $(PRODUCT_NAME) to use speech recognition.",
+          "androidSpeechServicePackages": ["com.google.android.googlequicksearchbox"]
+        }
+      ],
+      [
+        "@react-native-tvos/config-tv",
+        {
+          "androidTVBanner": "./assets/therapod_icon.png"
+        }
+      ],
+      "expo-router",
+      "expo-font",
+      [
+        "expo-video",
+        {
+          "supportsBackgroundPlayback": true
+        }
+      ],
+      [
+        "expo-av",
+        {
+          "microphonePermission": "Allow $(PRODUCT_NAME) to access your microphone for voice chat during therapy sessions.",
+          "supportsBackgroundPlayback": true
+        }
+      ],
+      "expo-file-system",
+      [
+        "@sentry/react-native/expo",
+        {
+          "url": "https://sentry.io/",
+          "project": "therapod-tv",
+          "organization": "iris-ai-5x"
+        }
+      ]
+    ],
+    "android": {
+      "versionCode": 11,
+      "icon": "./assets/therapod_icon.png",
+      "adaptiveIcon": {
+        "foregroundImage": "./assets/therapod_icon.png",
+        "backgroundColor": "#FFF8F0"
+      },
+      "splash": {
+        "image": "./assets/images/splash.png"
+      },
+      "package": "com.TherapodWellnessTvApp.app",
+      "permissions": [
+        "android.permission.READ_EXTERNAL_STORAGE",
+        "android.permission.WRITE_EXTERNAL_STORAGE",
+        "android.permission.INTERNET",
+        "android.permission.CAMERA",
+        "android.permission.RECORD_AUDIO",
+        "android.permission.MODIFY_AUDIO_SETTINGS",
+        "android.permission.ACCESS_NETWORK_STATE",
+        "android.permission.CHANGE_NETWORK_STATE",
+        "android.permission.WAKE_LOCK",
+        "android.permission.FOREGROUND_SERVICE",
+        "android.permission.FOREGROUND_SERVICE_MICROPHONE",
+        "android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS",
+        "android.permission.SYSTEM_ALERT_WINDOW",
+        "android.permission.CAPTURE_AUDIO_OUTPUT",
+        "android.permission.MANAGE_EXTERNAL_STORAGE"
+      ]
+    },
+    "ios": {
+      "bitcode": false,
+      "icon": "./assets/therapod_icon.png",
+      "splash": {
+        "image": "./assets/images/splash.png"
+      },
+      "bundleIdentifier": "com.TherapodWellnessTvApp.app",
+      "infoPlist": {
+        "NSCameraUsageDescription": "For streaming video during therapy sessions",
+        "NSMicrophoneUsageDescription": "For streaming audio during therapy sessions"
+      }
+    },
+    "web": {
+      "bundler": "metro",
+      "favicon": "./assets/therapod_icon.png",
+      "output": "static"
+    },
+    "experiments": {
+      "typedRoutes": true
+    },
+    "newArchEnabled": true,
+    "name": "Therapod AI Wellness",
+    "slug": "TherapodWellnessTvApp",
+    "icon": "./assets/therapod_icon.png",
+    "adaptiveIcon": {
+      "foregroundImage": "./assets/therapod_icon.png",
+      "backgroundColor": "#FFF8F0"
+    },
+    "extra": {
+      "router": {
+        "origin": false
+      },
+      "eas": {
+        "projectId": "0e22bb3c-0712-4793-8b20-22e7c16b3c11"
+      }
+    },
+    "runtimeVersion": {
+      "policy": "appVersion"
+    },
+    "updates": {
+      "url": "https://u.expo.dev/0e22bb3c-0712-4793-8b20-22e7c16b3c11"
+    }
+  }
+}
