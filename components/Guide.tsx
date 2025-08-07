@@ -41,9 +41,10 @@ interface GuideProps {
   userId?: string | null;
   therapistName?: string | null;
   therapistId?: string | null;
+  selectedPod?: string | null;
 }
 
-export default function Guide({ onSessionEnd, userId, therapistName, therapistId }: GuideProps) {
+export default function Guide({ onSessionEnd, userId, therapistName, therapistId, selectedPod }: GuideProps) {
   const [wsUrl, setWsUrl] = useState<string>("");
   const [token, setToken] = useState<string>("");
   const [sessionToken, setSessionToken] = useState<string>("");
@@ -125,21 +126,8 @@ export default function Guide({ onSessionEnd, userId, therapistName, therapistId
       
       const checkInMessage = "Hey there, haven't heard from you in a while, are you still there?";
       
-      const response = await fetch(`${API_CONFIG.serverUrl}/v1/streaming.task`, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          Authorization: `Bearer ${sessionToken}`,
-        },
-        body: JSON.stringify({
-          session_id: sessionId,
-          text: checkInMessage,
-          task_type: "talk",
-        }),
-      });
-      
-      const data = await response.json();
-      console.log("Inactivity check sent:", data);
+      // Make HeyGen avatar speak the check-in message
+      await makeAvatarSpeak(checkInMessage);
       
       // Start final warning timer
       finalWarningTimerRef.current = setTimeout(() => {
@@ -161,21 +149,8 @@ export default function Guide({ onSessionEnd, userId, therapistName, therapistId
       
       const finalWarningMessage = "I haven't heard from you in a while, going to end the session now. Look forward to talking again soon.";
       
-      const response = await fetch(`${API_CONFIG.serverUrl}/v1/streaming.task`, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          Authorization: `Bearer ${sessionToken}`,
-        },
-        body: JSON.stringify({
-          session_id: sessionId,
-          text: finalWarningMessage,
-          task_type: "talk",
-        }),
-      });
-      
-      const data = await response.json();
-      console.log("Final warning sent:", data);
+      // Make HeyGen avatar speak the final warning
+      await makeAvatarSpeak(finalWarningMessage);
       
       // Wait for final warning to finish, then send ending message
       setTimeout(async () => {
@@ -186,35 +161,30 @@ export default function Guide({ onSessionEnd, userId, therapistName, therapistId
           const endingMessage = await fetchEndingMessage();
           console.log('🎤 Sending ending message:', endingMessage);
           
-          const endingResponse = await fetch(`${API_CONFIG.serverUrl}/v1/streaming.task`, {
-            method: "POST",
-            headers: {
-              "Content-Type": "application/json",
-              Authorization: `Bearer ${sessionToken}`,
-            },
-            body: JSON.stringify({
-              session_id: sessionId,
-              text: endingMessage,
-              task_type: "talk",
-            }),
-          });
-          
-          const endingData = await endingResponse.json();
-          console.log("Ending message sent:", endingData);
+          // Make HeyGen avatar speak the ending message
+          await makeAvatarSpeak(endingMessage);
           
           // End session after ending message finishes (allow more time for longer message)
           setTimeout(() => {
             console.log('🛑 Ending session due to user inactivity - ending message completed');
+            console.log('🛑 Calling onSessionEnd callback...');
             if (onSessionEnd) {
+              console.log('✅ onSessionEnd callback exists, calling it...');
               onSessionEnd();
+            } else {
+              console.error('❌ onSessionEnd callback is null or undefined');
             }
           }, 8000); // Increased delay to allow for longer ending messages
           
         } catch (error) {
           console.error("Error sending ending message:", error);
           // End session immediately if ending message fails
+          console.log('🛑 Ending session due to ending message error...');
           if (onSessionEnd) {
+            console.log('✅ onSessionEnd callback exists, calling it...');
             onSessionEnd();
+          } else {
+            console.error('❌ onSessionEnd callback is null or undefined');
           }
         }
       }, 5000); // Wait 5 seconds for final warning to finish
@@ -222,8 +192,12 @@ export default function Guide({ onSessionEnd, userId, therapistName, therapistId
     } catch (error) {
       console.error("Error sending final warning:", error);
       // End session immediately if error
+      console.log('🛑 Ending session due to final warning error...');
       if (onSessionEnd) {
+        console.log('✅ onSessionEnd callback exists, calling it...');
         onSessionEnd();
+      } else {
+        console.error('❌ onSessionEnd callback is null or undefined');
       }
     }
   };
@@ -245,27 +219,60 @@ export default function Guide({ onSessionEnd, userId, therapistName, therapistId
       const userId = getUserId();
       const therapistId = getTherapistId();
       const sessionId = getSessionId();
+      
+      // Validate sessionId before making API call
+      if (!sessionId) {
+        console.error('❌ Cannot fetch welcome message: sessionId is null or undefined');
+        throw new Error('Session ID is required for welcome message API call');
+      }
+      
       console.log('🔍 Fetching welcome message for user:', userId, 'therapist:', therapistId, 'session:', sessionId);
+      
+      const requestBody = { 
+        user_id: userId,
+        therapist_id: therapistId,
+        session_id: sessionId
+      };
+      
+      console.log('📤 Welcome message request body:', JSON.stringify(requestBody, null, 2));
       
       const response = await fetch('https://api.therapodai.com/welcome-message', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ 
-          user_id: userId,
-          therapist_id: therapistId,
-          session_id: sessionId
-        }),
+        body: JSON.stringify(requestBody),
       });
       
       console.log('📥 Welcome message API response:', { 
         status: response.status, 
-        ok: response.ok 
+        ok: response.ok,
+        statusText: response.statusText
       });
       
-      if (!response.ok) throw new Error(`HTTP error! status: ${response.status}`);
+      if (!response.ok) {
+        const errorText = await response.text();
+        console.error('❌ Welcome message API error response:', errorText);
+        throw new Error(`HTTP error! status: ${response.status} - ${errorText}`);
+      }
+      
       const data = await response.json();
-      console.log('✅ Welcome message received:', data.welcome_message);
-      return data.welcome_message;
+      console.log('📥 Welcome message API data received:', data);
+      
+      // Check if welcome_message exists in the response
+      if (data && data.welcome_message) {
+        console.log('✅ Welcome message received:', data.welcome_message);
+        return data.welcome_message;
+      } else if (data && data.message) {
+        // Alternative field name
+        console.log('✅ Welcome message received (from message field):', data.message);
+        return data.message;
+      } else if (data && typeof data === 'string') {
+        // Direct string response
+        console.log('✅ Welcome message received (direct string):', data);
+        return data;
+      } else {
+        console.error('❌ Welcome message API returned unexpected data structure:', data);
+        throw new Error('Invalid response structure from welcome message API');
+      }
     } catch (error) {
       console.error('❌ Error fetching welcome message:', error);
       const fallbackMessage = therapistName 
@@ -281,32 +288,266 @@ export default function Guide({ onSessionEnd, userId, therapistName, therapistId
       const userId = getUserId();
       const therapistId = getTherapistId();
       const sessionId = getSessionId();
+      
+      // Validate sessionId before making API call
+      if (!sessionId) {
+        console.error('❌ Cannot fetch ending message: sessionId is null or undefined');
+        throw new Error('Session ID is required for ending message API call');
+      }
+      
       console.log('🔍 Fetching ending message for user:', userId, 'therapist:', therapistId, 'session:', sessionId);
+      
+      const requestBody = { 
+        user_id: userId,
+        therapist_id: therapistId,
+        session_id: sessionId
+      };
+      
+      console.log('📤 Ending message request body:', JSON.stringify(requestBody, null, 2));
       
       const response = await fetch('https://api.therapodai.com/ending-message', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ 
-          user_id: userId,
-          therapist_id: therapistId,
-          session_id: sessionId
-        }),
+        body: JSON.stringify(requestBody),
       });
       
       console.log('📥 Ending message API response:', { 
         status: response.status, 
-        ok: response.ok 
+        ok: response.ok,
+        statusText: response.statusText
       });
       
-      if (!response.ok) throw new Error(`HTTP error! status: ${response.status}`);
+      if (!response.ok) {
+        const errorText = await response.text();
+        console.error('❌ Ending message API error response:', errorText);
+        throw new Error(`HTTP error! status: ${response.status} - ${errorText}`);
+      }
+      
       const data = await response.json();
-      console.log('✅ Ending message received:', data.ending_message);
-      return data.ending_message;
+      console.log('📥 Ending message API data received:', data);
+      
+      // Check if ending_message exists in the response
+      if (data && data.ending_message) {
+        console.log('✅ Ending message received:', data.ending_message);
+        return data.ending_message;
+      } else if (data && data.message) {
+        // Alternative field name
+        console.log('✅ Ending message received (from message field):', data.message);
+        return data.message;
+      } else if (data && typeof data === 'string') {
+        // Direct string response
+        console.log('✅ Ending message received (direct string):', data);
+        return data;
+      } else {
+        console.error('❌ Ending message API returned unexpected data structure:', data);
+        throw new Error('Invalid response structure from ending message API');
+      }
     } catch (error) {
       console.error('❌ Error fetching ending message:', error);
       const fallbackMessage = "Thank you for sharing your thoughts with me today. I hope our conversation was helpful. Remember to take care of yourself, and I'll be here whenever you need to talk again. Take care and have a wonderful day!";
       console.log('📝 Using fallback ending message:', fallbackMessage);
       return fallbackMessage;
+    }
+  };
+
+  // Conversation history for the chat API
+  const [messages, setMessages] = useState<Array<{ role: 'user' | 'assistant', content: string }>>([]);
+
+  // Function to send message to custom chat API and get AI response
+  const sendMessageToChatAPI = async (userMessage: string): Promise<string> => {
+    try {
+      const userId = getUserId();
+      const therapistId = getTherapistId();
+      const sessionId = getSessionId();
+      
+      // Validate sessionId before making API call
+      if (!sessionId) {
+        console.error('❌ Cannot send message: sessionId is null or undefined');
+        throw new Error('Session ID is required for API calls');
+      }
+      
+      // Add user message to conversation history
+      const updatedMessages = [...messages, { role: 'user' as const, content: userMessage }];
+      setMessages(updatedMessages);
+      
+      console.log('🌐 Calling custom chat API with payload:', { 
+        messageCount: updatedMessages.length,
+        userMessage: userMessage.substring(0, 50) + (userMessage.length > 50 ? '...' : ''),
+        userId,
+        therapistId,
+        sessionId,
+        selectedPod
+      });
+      
+      const requestBody = { 
+        messages: updatedMessages, 
+        user_id: userId,
+        therapist_name: therapistName || "Claire",
+        therapist_id: therapistId,
+        pod_id: selectedPod || null,
+        session_id: sessionId
+      };
+      
+      console.log('📤 Full request body:', JSON.stringify(requestBody, null, 2));
+      
+      const response = await fetch('/api/chat', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify(requestBody),
+      });
+      
+      console.log('📥 RECEIVED RESPONSE FROM CHAT API', { 
+        status: response.status, 
+        ok: response.ok,
+        statusText: response.statusText,
+        contentType: response.headers.get('content-type'),
+        contentLength: response.headers.get('content-length')
+      });
+      
+      if (!response.ok) {
+        const errorText = await response.text();
+        console.error('❌ API Error Response:', errorText);
+        throw new Error(`Failed to get response from API: ${response.status} - ${response.statusText} - ${errorText}`);
+      }
+      
+      // Get the full response text
+      const responseText = await response.text();
+      console.log('📝 RESPONSE FROM CHAT API (RAW TEXT LENGTH):', responseText.length);
+      console.log('📝 RESPONSE FROM CHAT API (RAW TEXT):', responseText);
+      
+      // Process the streaming response (handling word-by-word chunks)
+      let fullResponse = '';
+      
+      try {
+        // Split response into lines (each line is a JSON chunk)
+        const lines = responseText.split('\n').filter(line => line.trim() !== '');
+        console.log('📊 Processing', lines.length, 'response chunks');
+        
+        // Process each chunk and accumulate content
+        for (const line of lines) {
+          try {
+            const chunk = JSON.parse(line);
+            console.log('📊 Processing chunk:', chunk);
+            
+            if (chunk.content) {
+              fullResponse += chunk.content;
+              console.log('✅ Added content:', chunk.content, 'Total so far:', fullResponse);
+            }
+          } catch (chunkError) {
+            console.warn('⚠️ Failed to parse chunk:', line, chunkError);
+          }
+        }
+        
+        console.log('✅ FINAL ASSEMBLED RESPONSE FROM CHAT API:', fullResponse);
+        console.log('✅ FINAL RESPONSE LENGTH:', fullResponse.length);
+        
+        // Ensure we have a complete sentence (ends with punctuation)
+        if (fullResponse.trim() && !fullResponse.trim().match(/[.!?]$/)) {
+          console.log('⚠️ Response doesn\'t end with punctuation, adding period');
+          fullResponse = fullResponse.trim() + ".";
+        }
+        
+        // If no content was extracted, try fallback parsing
+        if (!fullResponse.trim()) {
+          console.log('⚠️ No content extracted from chunks, trying fallback parsing');
+          try {
+            const parsedResponse = JSON.parse(responseText);
+            if (parsedResponse.content) {
+              fullResponse = parsedResponse.content;
+            } else {
+              fullResponse = responseText.trim();
+            }
+          } catch (fallbackError) {
+            console.log('⚠️ Fallback parsing failed, using raw text');
+            fullResponse = responseText.trim();
+          }
+        }
+      } catch (parseError) {
+        console.log('⚠️ Error processing streaming response:', parseError);
+        fullResponse = responseText.trim();
+        console.log('✅ USING RAW TEXT RESPONSE:', fullResponse);
+        console.log('✅ RAW TEXT RESPONSE LENGTH:', fullResponse.length);
+      }
+      
+      if (!fullResponse.trim()) {
+        throw new Error('Empty response from chat API');
+      }
+      
+      // Add AI response to conversation history
+      setMessages([...updatedMessages, { role: 'assistant' as const, content: fullResponse }]);
+      
+      return fullResponse;
+      
+    } catch (error) {
+      console.error('❌ Error calling chat API:', error);
+      throw error;
+    }
+  };
+
+  // Function to make HeyGen avatar speak text (without AI processing)
+  const makeAvatarSpeak = async (text: string) => {
+    try {
+      // Safety check for undefined or null text
+      if (!text || typeof text !== 'string') {
+        console.error('❌ Invalid text provided to makeAvatarSpeak:', text);
+        throw new Error('Invalid text provided to makeAvatarSpeak');
+      }
+      
+      console.log('🎤 Making HeyGen avatar speak:', text.substring(0, 50) + (text.length > 50 ? '...' : ''));
+      
+      // Sanitize the response to make it more avatar-friendly
+      let sanitizedText = text
+        // Replace any escaped quotes or backslashes
+        .replace(/\\"/g, '"')
+        .replace(/\\\\/g, '\\')
+        // Remove any JSON formatting artifacts
+        .replace(/\\n/g, ' ')
+        .replace(/\\t/g, ' ')
+        // Remove any potential HTML tags
+        .replace(/<[^>]*>/g, '')
+        // Normalize whitespace
+        .replace(/\s+/g, ' ')
+        .trim();
+        
+      // Truncate extremely long responses to prevent memory issues
+      if (sanitizedText.length > 2000) {
+        console.log('⚠️ Response too long, truncating to 2000 chars');
+        sanitizedText = sanitizedText.substring(0, 1997) + "...";
+      }
+      
+      console.log('🔊 SANITIZED TEXT FOR AVATAR:', sanitizedText.substring(0, 50) + (sanitizedText.length > 50 ? "..." : ""));
+      console.log('🔊 FULL SANITIZED TEXT LENGTH:', sanitizedText.length);
+      
+      // Send to HeyGen for avatar speaking only (no AI processing)
+      const response = await fetch(`${API_CONFIG.serverUrl}/v1/streaming.task`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${sessionToken}`,
+        },
+        body: JSON.stringify({
+          session_id: sessionId,
+          text: sanitizedText,
+          task_type: "talk", // Use talk mode to make avatar speak without AI processing
+        }),
+      });
+      
+      const data = await response.json();
+      console.log('✅ Avatar speaking task sent to HeyGen:', data);
+      
+      // Set avatar speaking state
+      setAvatarSpeaking(true);
+      setMicPausedForAvatar(true);
+      setSpeaking(true);
+      
+    } catch (error) {
+      console.error('❌ Error making avatar speak:', error);
+      setAvatarSpeaking(false);
+      setSpeaking(false);
+      setMicPausedForAvatar(false);
+      throw error;
     }
   };
 
@@ -733,6 +974,25 @@ export default function Guide({ onSessionEnd, userId, therapistName, therapistId
   const createSession = async () => {
     try {
       setLoading(true);
+      
+      // Validate that we have a valid sessionId from Firebase
+      const firebaseSessionId = getSessionId();
+      console.log('🔍 Checking Firebase session ID:', firebaseSessionId);
+      
+      if (!firebaseSessionId) {
+        console.error('❌ Cannot start session: Firebase sessionId is null or undefined');
+        console.error('❌ Session requires a valid sessionId from Firebase for backend tracking');
+        setLoading(false);
+        // Call onSessionEnd to return to meditation view
+        if (onSessionEnd) {
+          console.log('🔄 Returning to meditation view due to missing sessionId');
+          onSessionEnd();
+        }
+        return;
+      }
+      
+      console.log('✅ Firebase sessionId is valid, proceeding with session creation');
+      
       // Get new session token
       const newSessionToken = await getSessionToken();
       setSessionToken(newSessionToken);
@@ -877,22 +1137,9 @@ export default function Guide({ onSessionEnd, userId, therapistName, therapistId
             // Fetch personalized welcome message from API
             const greetingText = await fetchWelcomeMessage();
             console.log('🎤 Sending personalized welcome message:', greetingText);
-              
-            const response = await fetch(`${API_CONFIG.serverUrl}/v1/streaming.task`, {
-              method: "POST",
-              headers: {
-                "Content-Type": "application/json",
-                Authorization: `Bearer ${newSessionToken}`,
-              },
-              body: JSON.stringify({
-                session_id: newSessionId,
-                text: greetingText,
-                task_type: "talk",
-              }),
-            });
             
-            const data = await response.json();
-            console.log("Initial greeting sent:", data);
+            // Make HeyGen avatar speak the welcome message
+            await makeAvatarSpeak(greetingText);
             
             // Start inactivity timer after session is initialized
             console.log('⏰ Starting inactivity monitoring...');
@@ -937,34 +1184,28 @@ export default function Guide({ onSessionEnd, userId, therapistName, therapistId
   const sendText = async () => {
     try {
       setSpeaking(true);
+      setAvatarSpeaking(true);
+      setMicPausedForAvatar(true);
       
       // Reset inactivity timers when user sends text
       resetInactivityTimers();
 
-      // Send task request
-      const response = await fetch(
-        `${API_CONFIG.serverUrl}/v1/streaming.task`,
-        {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-            Authorization: `Bearer ${sessionToken}`,
-          },
-          body: JSON.stringify({
-            session_id: sessionId,
-            text: text,
-            task_type: "talk",
-          }),
-        }
-      );
-
-      const data = await response.json();
-      console.log("Task response:", data);
+      // Step 1: Send to custom chat API to get AI response
+      console.log('🌐 Getting AI response from custom chat API for text input...');
+      const aiResponse = await sendMessageToChatAPI(text);
+      console.log('✅ AI response received:', aiResponse.substring(0, 50) + (aiResponse.length > 50 ? '...' : ''));
+      
+      // Step 2: Make HeyGen avatar speak the AI response
+      console.log('🎤 Making HeyGen avatar speak AI response...');
+      await makeAvatarSpeak(aiResponse);
+      
+      console.log("✅ Text message processing complete");
       setText(""); // Clear input after sending
     } catch (error) {
       console.error("Error sending text:", error);
-    } finally {
+      setAvatarSpeaking(false);
       setSpeaking(false);
+      setMicPausedForAvatar(false);
     }
   };
 
@@ -1137,87 +1378,45 @@ export default function Guide({ onSessionEnd, userId, therapistName, therapistId
 
   const sendVoiceMessage = async (transcribedText: string) => {
     try {
-      console.log('🚀 SENDING VOICE MESSAGE TO AI:');
+      console.log('🚀 SENDING VOICE MESSAGE TO CUSTOM CHAT API:');
       console.log(`   Message: "${transcribedText}"`);
       console.log(`   Length: ${transcribedText.length} characters`);
       console.log(`   Session ID: ${sessionId}`);
       console.log(`   Timestamp: ${new Date().toISOString()}`);
       
-      // Set speaking state but don't immediately pause microphone
-      // Let the WebSocket events handle the actual avatar speaking state
+      // Set speaking state and pause microphone
       console.log('🎤 Setting speaking state...');
       setSpeaking(true);
+      setAvatarSpeaking(true);
+      setMicPausedForAvatar(true);
       
-      // Only pause microphone if echo prevention is enabled
-      if (echoPreventionEnabled) {
-        console.log('🎤 Echo prevention enabled - pausing microphone...');
-        setAvatarSpeaking(true);
-        setMicPausedForAvatar(true);
-        
-        // Stop speech recognition immediately and clear any pending results
-        if (isRecording) {
-          console.log('🛑 Stopping speech recognition immediately...');
-          try {
-            ExpoSpeechRecognitionModule.stop();
-            setIsRecording(false);
-            setIsListening(false);
-            setRecognizedText(''); // Clear any pending speech
-          } catch (error) {
-            console.error('❌ Error stopping speech recognition:', error);
-          }
+      // Stop speech recognition immediately
+      if (isRecording) {
+        console.log('🛑 Stopping speech recognition immediately...');
+        try {
+          ExpoSpeechRecognitionModule.stop();
+          setIsRecording(false);
+          setIsListening(false);
+          setRecognizedText(''); // Clear any pending speech
+        } catch (error) {
+          console.error('❌ Error stopping speech recognition:', error);
         }
       }
       
       // Clear any interim results
       setRecognizedText('');
 
-      const requestBody = {
-        session_id: sessionId,
-        text: transcribedText,
-        task_type: "talk",
-      };
+      // Step 1: Send to custom chat API to get AI response
+      console.log('🌐 Getting AI response from custom chat API...');
+      const aiResponse = await sendMessageToChatAPI(transcribedText);
+      console.log('✅ AI response received:', aiResponse.substring(0, 50) + (aiResponse.length > 50 ? '...' : ''));
       
-      console.log('📤 API Request:', JSON.stringify(requestBody, null, 2));
-
-      const response = await fetch(
-        `${API_CONFIG.serverUrl}/v1/streaming.task`,
-        {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-            Authorization: `Bearer ${sessionToken}`,
-          },
-          body: JSON.stringify(requestBody),
-        }
-      );
-
-      const data = await response.json();
-      console.log('📥 AI RESPONSE RECEIVED');
-      console.log('🗣️ Avatar will start speaking now...');
+      // Step 2: Make HeyGen avatar speak the AI response
+      console.log('🎤 Making HeyGen avatar speak AI response...');
+      await makeAvatarSpeak(aiResponse);
+      
+      console.log('✅ Voice message processing complete');
       setText(""); // Clear any text input
-      
-      // Auto-resume microphone after a reasonable delay if WebSocket events don't fire
-      if (echoPreventionEnabled) {
-        const estimatedWords = transcribedText.length / 5;
-        const estimatedSpeakingTime = Math.max(3000, (estimatedWords / 120) * 60 * 1000);
-        const bufferTime = 2000; // extra buffer time
-        const totalWaitTime = estimatedSpeakingTime + bufferTime;
-        
-        console.log(`⏱️ Auto-resume timer: ${Math.round(totalWaitTime/1000)}s`);
-        
-        setTimeout(() => {
-          console.log('⏱️ Auto-resume timer fired - resetting avatar speaking state');
-          setAvatarSpeaking(false);
-          setSpeaking(false);
-          setMicPausedForAvatar(false);
-          
-          // Resume listening if needed
-          if (conversationMode === 'always_on' && voiceModeEnabled && !isRecording) {
-            console.log('🔄 Auto-resuming listening after timer');
-            startAlwaysOnListening();
-          }
-        }, totalWaitTime);
-      }
       
     } catch (error) {
       console.error('❌ ERROR SENDING VOICE MESSAGE:', error);

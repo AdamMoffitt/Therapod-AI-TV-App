@@ -1253,6 +1253,8 @@ export default function HomeScreenView() {
         onSessionEnd={handleCloseSession}
         userId={currentUserId}
         therapistName={currentTherapistName}
+        therapistId={currentTherapistId}
+        selectedPod={selectedPod}
       />
     );
   }
