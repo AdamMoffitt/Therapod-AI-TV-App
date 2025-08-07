@@ -54,22 +54,42 @@ class AudioService {
 
   private async configureAudioMode() {
     try {
-      // Simplified audio configuration that works reliably
-      await Audio.setAudioModeAsync({
-        allowsRecordingIOS: true,
-        playsInSilentModeIOS: true,
-        staysActiveInBackground: true,
-        shouldDuckAndroid: false,
-        playThroughEarpieceAndroid: false,
-      });
-      console.log('✅ Audio mode configured for continuous listening');
+      // Android TV specific configuration
+      if (Platform.OS === 'android' && Platform.isTV) {
+        await Audio.setAudioModeAsync({
+          allowsRecordingIOS: false,
+          playsInSilentModeIOS: false,
+          staysActiveInBackground: true,
+          shouldDuckAndroid: false,
+          playThroughEarpieceAndroid: false,
+        });
+        console.log('✅ Android TV audio mode configured for continuous listening');
+      } else if (Platform.OS === 'android') {
+        // Regular Android configuration
+        await Audio.setAudioModeAsync({
+          allowsRecordingIOS: false,
+          playsInSilentModeIOS: false,
+          staysActiveInBackground: true,
+          shouldDuckAndroid: false,
+          playThroughEarpieceAndroid: false,
+        });
+        console.log('✅ Android audio mode configured for continuous listening');
+      } else {
+        // iOS configuration
+        await Audio.setAudioModeAsync({
+          allowsRecordingIOS: true,
+          playsInSilentModeIOS: true,
+          staysActiveInBackground: true,
+          shouldDuckAndroid: false,
+          playThroughEarpieceAndroid: false,
+        });
+        console.log('✅ iOS audio mode configured for continuous listening');
+      }
     } catch (error) {
       console.error('❌ Failed to configure audio mode:', error);
       throw error;
     }
   }
-
-
 
   async startContinuousListening(config: any = {}) {
     if (!this.isInitialized) {
@@ -89,6 +109,16 @@ class AudioService {
         ...(Platform.OS === 'android' && {
           partialResults: true,
           maxAlternatives: 3,
+        }),
+        // Android TV specific optimizations
+        ...(Platform.OS === 'android' && Platform.isTV && {
+          partialResults: true,
+          maxAlternatives: 3,
+          // Use cloud recognition for better reliability on TV
+          requiresOnDeviceRecognition: false,
+          // TV-specific timeout settings
+          recognitionTimeout: 10000, // 10 second timeout
+          speechTimeout: 2000, // 2 seconds of silence to complete
         }),
         ...config
       };
@@ -155,8 +185,6 @@ class AudioService {
     }
   }
 
-
-
   private isCurrentlyListening(): boolean {
     // This would need to be implemented based on the actual speech recognition state
     // For now, we'll use the internal flag
@@ -179,7 +207,66 @@ class AudioService {
       if (this.isListening) {
         this.startContinuousListening();
       }
-    }, 50); // Very short delay
+    }, Platform.OS === 'android' && Platform.isTV ? 1000 : 50); // Longer delay for TV
+  }
+
+  // TV-Specific Error Handling
+  handleTVMicrophoneError(error: any) {
+    console.error('❌ TV Microphone Error:', error);
+    
+    let errorMessage = 'Voice recognition error occurred.';
+    let suggestion = '';
+    
+    if (error.error) {
+      switch (error.error) {
+        case 'not-allowed':
+          errorMessage = 'Microphone access denied.';
+          suggestion = 'Please enable microphone permission in TV Settings > Apps > Therapod AI Wellness > Permissions';
+          break;
+        case 'no-speech':
+          errorMessage = 'No speech detected.';
+          suggestion = 'Try speaking closer to the TV or remote control microphone.';
+          break;
+        case 'network':
+          errorMessage = 'Network connection required.';
+          suggestion = 'Please check your TV\'s internet connection.';
+          break;
+        case 'audio-capture':
+          errorMessage = 'Microphone hardware error.';
+          suggestion = 'Try restarting the app or check if another app is using the microphone.';
+          break;
+        default:
+          errorMessage = 'Voice recognition error occurred.';
+          suggestion = 'Please try again or restart the app.';
+      }
+    }
+    
+    console.error(`TV Error: ${errorMessage} - ${suggestion}`);
+  }
+
+  // Enhanced Microphone Detection for TV
+  async detectTVMicrophone() {
+    try {
+      console.log('🔍 Detecting TV microphone capabilities...');
+      
+      if (Platform.OS === 'android' && Platform.isTV) {
+        // Check for TV-specific microphone features
+        const tvMicFeatures = {
+          hasBuiltInMic: true, // Assume modern Android TVs have built-in mics
+          hasRemoteMic: true,  // Most TV remotes have voice search
+          hasUSBMic: false,    // Would need to check USB devices
+          hasBluetoothMic: false, // Would need to check Bluetooth devices
+        };
+        
+        console.log('📺 TV Microphone Features:', tvMicFeatures);
+        return tvMicFeatures;
+      }
+      
+      return { hasBuiltInMic: true };
+    } catch (error) {
+      console.error('❌ Error detecting TV microphone:', error);
+      return { hasBuiltInMic: false };
+    }
   }
 
   async cleanup() {
@@ -190,8 +277,6 @@ class AudioService {
       if (this.isListening) {
         await this.stopListening();
       }
-      
-
       
       // Clear any timeouts
       if (this.retryTimeout) {

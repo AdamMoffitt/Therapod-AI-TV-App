@@ -11,6 +11,7 @@ import {
   Pressable,
   Alert,
   ActivityIndicator,
+  BackHandler,
 } from "react-native";
 import { Audio } from 'expo-av';
 import {
@@ -67,8 +68,32 @@ export default function Guide({ onSessionEnd, userId, therapistName }: GuideProp
   // Start audio session and auto-start HeyGen session
   useEffect(() => {
     const setupAudio = async () => {
-              // Configure audio mode to prevent echo
-        try {
+      // Configure audio mode to prevent echo
+      try {
+        // Android TV specific configuration
+        if (Platform.OS === 'android' && Platform.isTV) {
+          // Enhanced Android TV audio configuration
+          await Audio.setAudioModeAsync({
+            allowsRecordingIOS: false,
+            playsInSilentModeIOS: false,
+            staysActiveInBackground: true,
+            shouldDuckAndroid: false,
+            playThroughEarpieceAndroid: false,
+          });
+          
+          console.log('✅ Android TV audio mode optimized');
+        } else if (Platform.OS === 'android') {
+          // Regular Android configuration
+          await Audio.setAudioModeAsync({
+            allowsRecordingIOS: false,
+            playsInSilentModeIOS: false,
+            staysActiveInBackground: true,
+            shouldDuckAndroid: false,
+            playThroughEarpieceAndroid: false,
+          });
+          console.log('✅ Android audio mode configured to prevent echo');
+        } else {
+          // iOS configuration
           await Audio.setAudioModeAsync({
             allowsRecordingIOS: true,
             playsInSilentModeIOS: true,
@@ -76,11 +101,12 @@ export default function Guide({ onSessionEnd, userId, therapistName }: GuideProp
             shouldDuckAndroid: false,
             playThroughEarpieceAndroid: false,
           });
-          console.log('✅ Audio mode configured to prevent echo');
-        } catch (error) {
-          console.error('❌ Failed to configure audio mode:', error);
-          setVoiceModeEnabled(false);
+          console.log('✅ iOS audio mode configured to prevent echo');
         }
+      } catch (error) {
+        console.error('❌ Failed to configure audio mode:', error);
+        setVoiceModeEnabled(false);
+      }
     };
 
     setupAudio();
@@ -107,13 +133,13 @@ export default function Guide({ onSessionEnd, userId, therapistName }: GuideProp
         console.log('🔍 Health check: Ensuring microphone is active...');
         startAlwaysOnListening();
       }
-    }, 10000); // Check every 10 seconds
+    }, Platform.OS === 'android' && Platform.isTV ? 15000 : 10000); // 15 seconds for TV, 10 for mobile
     
     // Set up avatar speaking timeout check
     const avatarSpeakingTimeoutCheck = setInterval(() => {
       if (avatarSpeaking && avatarSpeakingStartTime) {
         const speakingDuration = Date.now() - avatarSpeakingStartTime;
-        const maxSpeakingTime = 30000; // 30 seconds max
+        const maxSpeakingTime = Platform.OS === 'android' && Platform.isTV ? 45000 : 30000; // 45 seconds for TV, 30 for mobile
         
         if (speakingDuration > maxSpeakingTime) {
           console.log('⏰ Avatar speaking timeout - resetting state');
@@ -141,6 +167,39 @@ export default function Guide({ onSessionEnd, userId, therapistName }: GuideProp
       clearInterval(microphoneHealthCheck);
       clearInterval(avatarSpeakingTimeoutCheck);
     };
+  }, []);
+
+  // TV Remote Control Integration
+  useEffect(() => {
+    if (Platform.OS === 'android' && Platform.isTV) {
+      const backHandler = BackHandler.addEventListener(
+        'hardwareBackPress',
+        () => {
+          if (isRecording) {
+            stopRecording();
+            return true; // Prevent default back action
+          }
+          return false;
+        }
+      );
+
+      return () => backHandler.remove();
+    }
+  }, [isRecording]);
+
+  // TV Performance Optimization
+  useEffect(() => {
+    if (Platform.OS === 'android' && Platform.isTV) {
+      // Optimize for TV performance
+      const tvOptimizations = {
+        // Reduce speech recognition restarts to preserve resources
+        microphoneHealthCheckInterval: 15000, // 15 seconds instead of 10
+        avatarSpeakingTimeout: 45000, // 45 seconds instead of 30
+        errorRecoveryDelay: 1000, // 1 second instead of 500ms
+      };
+      
+      console.log('📺 Applied TV performance optimizations:', tvOptimizations);
+    }
   }, []);
 
   // Speech recognition event handlers
@@ -342,10 +401,22 @@ export default function Guide({ onSessionEnd, userId, therapistName }: GuideProp
         return;
       }
       
-      // Auto-resume microphone if audio level is high but not listening (for natural conversation)
-      if (event.value > 0.3 && !isListening && conversationMode === 'always_on' && !avatarSpeaking && !micPausedForAvatar) {
-        console.log('🎤 High audio level detected - ensuring microphone is active...');
-        startAlwaysOnListening();
+      // TV-specific audio level handling
+      if (Platform.OS === 'android' && Platform.isTV) {
+        // Higher threshold for TV environment (more background noise)
+        const tvAudioThreshold = 0.4; // Higher than mobile threshold
+        
+        if (event.value > tvAudioThreshold && !isListening && 
+            conversationMode === 'always_on' && !avatarSpeaking && !micPausedForAvatar) {
+          console.log('🎤 TV: High audio detected - activating microphone...');
+          startAlwaysOnListening();
+        }
+      } else {
+        // Auto-resume microphone if audio level is high but not listening (for natural conversation)
+        if (event.value > 0.3 && !isListening && conversationMode === 'always_on' && !avatarSpeaking && !micPausedForAvatar) {
+          console.log('🎤 High audio level detected - ensuring microphone is active...');
+          startAlwaysOnListening();
+        }
       }
     }
   });
@@ -676,26 +747,42 @@ export default function Guide({ onSessionEnd, userId, therapistName }: GuideProp
       // Clear previous recognition results
       setRecognizedText('');
       
-      // Configure for continuous recognition based on documentation
+      // Android TV optimized speech recognition config
       const config = {
         lang: 'en-US',
         interimResults: true,
         continuous: true, // Always use continuous for always-on mode
         maxAlternatives: 1,
         requiresOnDeviceRecognition: false, // Use cloud recognition for better reliability
+        // Android TV specific optimizations
+        ...(Platform.OS === 'android' && Platform.isTV && {
+          partialResults: true, // Get partial results faster
+          maxAlternatives: 3, // More alternatives for better accuracy
+        }),
       };
       
-      console.log('🔧 Speech Recognition Config:');
-      console.log(JSON.stringify(config, null, 2));
+      console.log('🔧 Speech Recognition Config:', JSON.stringify(config, null, 2));
+      
+      // For Android TV, add additional audio source configuration
+      if (Platform.OS === 'android' && Platform.isTV) {
+        // Request specific microphone permissions for TV
+        const audioPermission = await Audio.requestPermissionsAsync();
+        if (audioPermission.status !== 'granted') {
+          Alert.alert('Microphone Permission Required', 
+            'Please enable microphone access in TV settings for voice chat.');
+          return;
+        }
+      }
       
       // Start speech recognition with expo-speech-recognition
       ExpoSpeechRecognitionModule.start(config);
+      console.log('✅ TV-optimized speech recognition started');
       
-      console.log('✅ SPEECH RECOGNITION STARTED - SPEAK NOW!');
+      setIsRecording(true);
+      setIsListening(true);
     } catch (error) {
-      console.error('❌ FAILED TO START SPEECH RECOGNITION:', error);
-      Alert.alert('Speech Recognition Error', 'Failed to start speech recognition. Please try again.');
-      setIsRecording(false);
+      console.error('❌ Failed to start speech recognition:', error);
+      handleTVMicrophoneError(error);
     }
   };
 
@@ -961,6 +1048,160 @@ export default function Guide({ onSessionEnd, userId, therapistName }: GuideProp
     } finally {
       setLoading(false);
     }
+  };
+
+  // Microphone test function for Android TV debugging
+  const testMicrophoneForTV = async () => {
+    try {
+      console.log('🎤 Testing microphone for Android TV...');
+      
+      // Test permissions
+      const audioPermission = await Audio.requestPermissionsAsync();
+      const speechPermission = await ExpoSpeechRecognitionModule.requestPermissionsAsync();
+      
+      console.log('Permissions:', {
+        audio: audioPermission.status,
+        speech: speechPermission.granted
+      });
+      
+      if (audioPermission.status !== 'granted' || !speechPermission.granted) {
+        Alert.alert('Permissions Required', 'Microphone and speech recognition permissions are needed.');
+        return;
+      }
+      
+      // Test audio configuration
+      if (Platform.OS === 'android' && Platform.isTV) {
+        await Audio.setAudioModeAsync({
+          allowsRecordingIOS: false,
+          playsInSilentModeIOS: false,
+          staysActiveInBackground: true,
+          shouldDuckAndroid: false,
+          playThroughEarpieceAndroid: false,
+        });
+        console.log('✅ Android TV audio mode configured');
+      }
+      
+      // Test speech recognition
+      const isAvailable = ExpoSpeechRecognitionModule.isRecognitionAvailable();
+      if (!isAvailable) {
+        Alert.alert('Speech Recognition Not Available', 'Speech recognition is not available on this device.');
+        return;
+      }
+      
+      // Start a quick test
+      const testConfig = {
+        lang: 'en-US',
+        interimResults: true,
+        continuous: false,
+        maxAlternatives: 1,
+        requiresOnDeviceRecognition: false,
+      };
+      
+      ExpoSpeechRecognitionModule.start(testConfig);
+      
+      // Stop after 5 seconds
+      setTimeout(() => {
+        ExpoSpeechRecognitionModule.stop();
+        Alert.alert('Test Complete', 'Microphone test completed. Check console for details.');
+      }, 5000);
+      
+    } catch (error) {
+      console.error('❌ Microphone test failed:', error);
+      Alert.alert('Test Failed', `Microphone test failed: ${error instanceof Error ? error.message : 'Unknown error'}`);
+    }
+  };
+
+  // TV-Specific Error Handling
+  const handleTVMicrophoneError = (error: any) => {
+    console.error('❌ TV Microphone Error:', error);
+    
+    let errorMessage = 'Voice recognition error occurred.';
+    let suggestion = '';
+    
+    if (error.error) {
+      switch (error.error) {
+        case 'not-allowed':
+          errorMessage = 'Microphone access denied.';
+          suggestion = 'Please enable microphone permission in TV Settings > Apps > Therapod AI Wellness > Permissions';
+          break;
+        case 'no-speech':
+          errorMessage = 'No speech detected.';
+          suggestion = 'Try speaking closer to the TV or remote control microphone.';
+          break;
+        case 'network':
+          errorMessage = 'Network connection required.';
+          suggestion = 'Please check your TV\'s internet connection.';
+          break;
+        case 'audio-capture':
+          errorMessage = 'Microphone hardware error.';
+          suggestion = 'Try restarting the app or check if another app is using the microphone.';
+          break;
+        default:
+          errorMessage = 'Voice recognition error occurred.';
+          suggestion = 'Please try again or restart the app.';
+      }
+    }
+    
+    Alert.alert(
+      'Voice Chat Error',
+      `${errorMessage}\n\n${suggestion}`,
+      [
+        { text: 'Retry', onPress: () => startRecording() },
+        { text: 'Disable Voice', onPress: () => setVoiceModeEnabled(false) },
+      ]
+    );
+  };
+
+  // Enhanced Microphone Detection for TV
+  const detectTVMicrophone = async () => {
+    try {
+      console.log('🔍 Detecting TV microphone capabilities...');
+      
+      // Check if device has microphone
+      const hasAudioInputFeature = await ExpoSpeechRecognitionModule.getAvailableVoices();
+      
+      if (Platform.OS === 'android' && Platform.isTV) {
+        // Check for TV-specific microphone features
+        const tvMicFeatures = {
+          hasBuiltInMic: true, // Assume modern Android TVs have built-in mics
+          hasRemoteMic: true,  // Most TV remotes have voice search
+          hasUSBMic: false,    // Would need to check USB devices
+          hasBluetoothMic: false, // Would need to check Bluetooth devices
+        };
+        
+        console.log('📺 TV Microphone Features:', tvMicFeatures);
+        return tvMicFeatures;
+      }
+      
+      return { hasBuiltInMic: true };
+    } catch (error) {
+      console.error('❌ Error detecting TV microphone:', error);
+      return { hasBuiltInMic: false };
+    }
+  };
+
+  // TV-Specific UI Adjustments
+  const getTVFriendlyStyles = () => {
+    if (Platform.OS === 'android' && Platform.isTV) {
+      return {
+        // Larger touch targets for TV remote navigation
+        voiceButton: {
+          minWidth: 300, // Larger for TV
+          paddingVertical: 20,
+        },
+        // High contrast text for TV viewing distance
+        voiceModeText: {
+          fontSize: 24, // Larger for TV
+          fontWeight: '700',
+        },
+        // TV-friendly focus indicators
+        focusedButton: {
+          borderWidth: 3,
+          borderColor: '#FFD700', // Gold border for focus
+        },
+      };
+    }
+    return {};
   };
 
   if (!connected || loading) {

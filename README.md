@@ -1,70 +1,89 @@
-# Expo Router TV demo 👋
+# Therapod Wellness TV Webapp
 
-![Apple TV screen shot](https://github.com/douglowder/examples/assets/6577821/a881466f-a7a0-4c66-b1fc-33235c466997)
-![Android TV screen shot](https://github.com/douglowder/examples/assets/6577821/815c8e01-8275-4cc1-bd57-b9c8bce1fb02)
+A React Native Expo app for Android TV that provides AI-powered wellness therapy sessions with voice interaction capabilities.
 
-This is an [Expo](https://expo.dev) project created with [`create-expo-app`](https://www.npmjs.com/package/create-expo-app).
+## Features
 
-This project uses
+- AI-powered therapy sessions with voice interaction
+- Always-on microphone listening for natural conversation
+- Android TV optimized interface
+- Real-time speech recognition
+- Avatar-based therapy sessions
 
-- the [React Native TV fork](https://github.com/react-native-tvos/react-native-tvos), which supports both phone (Android and iOS) and TV (Android TV and Apple TV) targets
-- the [React Native TV config plugin](https://github.com/react-native-tvos/config-tv/tree/main/packages/config-tv) to allow Expo prebuild to modify the project's native files for TV builds
+## Android TV Microphone Support
 
-## 🚀 How to use
+This app has been specifically optimized for Android TV microphone functionality. Key features include:
 
-- `cd` into the project
+### Microphone Configuration
+- **Android TV specific audio mode** - Optimized for TV audio routing
+- **Continuous speech recognition** - Always-on listening capability
+- **Cloud-based recognition** - Better reliability on TV devices
+- **Automatic retry mechanisms** - Handles connection issues gracefully
 
-```sh
-yarn
-yarn prebuild # Executes Expo prebuild with TV modifications
-yarn ios # Build and run for Apple TV
-yarn android # Build for Android TV
-yarn web # Run the project on web from localhost
+### Troubleshooting Android TV Microphone Issues
+
+If you're experiencing microphone issues on Android TV:
+
+1. **Check Permissions**
+   - Go to TV Settings > Apps > Therapod AI Wellness > Permissions
+   - Enable Microphone and Speech Recognition permissions
+   - Enable Bluetooth permissions if using external microphone
+
+2. **Audio Configuration**
+   - Connect external microphone for better quality
+   - Check TV audio settings for microphone input
+   - Ensure stable WiFi connection (minimum 5Mbps)
+
+3. **Common Solutions**
+   - Restart the app completely
+   - Clear app cache (Settings > Apps > Therapod > Storage > Clear cache)
+   - Check for Android TV system updates
+   - Verify network connection is stable
+
+4. **Advanced Debugging**
+   - Use the built-in microphone test function
+   - Check console logs for detailed error messages
+   - Verify Bluetooth is enabled for external microphones
+
+### Technical Details
+
+The app uses the following Android TV specific configurations:
+
+```typescript
+// Audio mode for Android TV
+await Audio.setAudioModeAsync({
+  allowsRecordingIOS: false,
+  playsInSilentModeIOS: false,
+  staysActiveInBackground: true,
+  shouldDuckAndroid: false,
+  playThroughEarpieceAndroid: false,
+});
+
+// Speech recognition for Android TV
+const config = {
+  lang: 'en-US',
+  interimResults: true,
+  continuous: true,
+  maxAlternatives: 3,
+  requiresOnDeviceRecognition: false,
+  partialResults: true,
+};
 ```
 
-> **_NOTE:_**
-> Setting the environment variable `EXPO_TV=1` enables the `@react-native-tvos/config-tv` plugin to modify the project for TV.
-> This can also be done by setting the parameter `isTV` to true in the `app.json`.
+## Installation
+
+1. Clone the repository
+2. Install dependencies: `npm install`
+3. Run on Android TV: `npx expo run:android`
 
 ## Development
 
-You can start developing by editing the files inside the **app** directory. This project uses [file-based routing](https://docs.expo.dev/router/introduction).
+- **Platform**: React Native with Expo
+- **Target**: Android TV
+- **Voice**: expo-speech-recognition
+- **Audio**: expo-av
+- **AI**: HeyGen API integration
 
-This project includes a [demo](./components/EventHandlingDemo.tsx) showing how to use React Native TV APIs to highlight controls as the user navigates the screen with the remote control.
+## Support
 
-## Deploy
-
-Deploy on all platforms with Expo Application Services (EAS).
-
-- Deploy the website: `npx eas-cli deploy` — [Learn more](https://docs.expo.dev/eas/hosting/get-started/)
-- Deploy on iOS and Android using: `npx eas-cli build` — [Learn more](https://expo.dev/eas)
-
-## TV specific file extensions
-
-This project includes an [example Metro configuration](./metro.config.js) that allows Metro to resolve application source files with TV-specific code, indicated by specific file extensions (`*.ios.tv.tsx`, `*.android.tv.tsx`, `*.tv.tsx`). The [ExternalLink](./components/ExternalLink.tsx) component makes use of this by having a [separate TV source file](./components/ExternalLink.tv.tsx) that avoids importing packages that don't exist on Apple TV.
-
-## Get a fresh project
-
-When you're ready, run:
-
-```bash
-npm run reset-project
-```
-
-This command will move the starter code to the **app-example** directory and create a blank **app** directory where you can start developing.
-
-## Learn more
-
-To learn more about developing your project with Expo, look at the following resources:
-
-- [Expo documentation](https://docs.expo.dev/): Learn fundamentals, or go into advanced topics with our [guides](https://docs.expo.dev/guides).
-- [Learn Expo tutorial](https://docs.expo.dev/learn): Follow a step-by-step tutorial where you'll create a project that runs on Android, iOS, and the web.
-
-## Join the community
-
-Join our community of developers creating universal apps.
-
-- [Expo on GitHub](https://github.com/expo/expo): View our open source platform and contribute.
-- [Discord community](https://chat.expo.dev): Chat with Expo users and ask questions.
-
-don't forget to add defaultVideo in assets
+For microphone issues on Android TV, please refer to the [Microphone Setup Guide](docs/MICROPHONE_SETUP.md) for detailed troubleshooting steps.

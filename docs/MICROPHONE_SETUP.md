@@ -2,13 +2,14 @@
 
 This guide ensures your microphone works continuously and perfectly in the Therapod Wellness TV App. Since this is a TV application that stays in the foreground, the setup is much simpler than mobile apps.
 
-## Android Setup
+## Android TV Setup
 
 ### 1. App Permissions
-1. Go to **Settings** > **Apps** > **Therapod AI Wellness**
+1. Go to **TV Settings** > **Apps** > **Therapod AI Wellness**
 2. Tap **Permissions**
 3. Enable **Microphone** and **Speech Recognition**
-4. Set **Background app refresh** to **Allow**
+4. Enable **Bluetooth** (if using external microphone)
+5. Set **Background app refresh** to **Allow**
 
 ### 2. TV-Specific Settings
 Since this is a TV app that stays in the foreground:
@@ -20,23 +21,61 @@ Since this is a TV app that stays in the foreground:
 1. **Connect external microphone** if needed for better quality
 2. **Check TV audio settings** - Ensure microphone input is enabled
 3. **Test microphone levels** - Adjust volume in TV settings if needed
+4. **Check Bluetooth settings** - Ensure Bluetooth is enabled for external mics
 
-## TV-Specific Setup
+## Android TV Troubleshooting
 
-### 1. App Permissions
-1. Go to **TV Settings** > **Apps** > **Therapod AI Wellness**
-2. Enable **Microphone** permission
-3. Enable **Speech Recognition** permission
+### Common Android TV Microphone Issues
 
-### 2. Audio Configuration
-1. **Connect external microphone** via USB or Bluetooth if needed
-2. **Test microphone input** in TV audio settings
-3. **Adjust microphone sensitivity** if available in TV settings
+#### 1. Microphone Not Detected
+- **Check TV microphone input** in audio settings
+- **Restart the TV app** if microphone stops working
+- **Verify network connection** is stable
+- **Check external microphone** if using one
+- **Ensure Bluetooth is enabled** for external mics
 
-### 3. Network Configuration
-1. **Ensure stable WiFi connection** for voice processing
-2. **Check network speed** - minimum 5Mbps recommended
-3. **Avoid network interference** from other devices
+#### 2. Speech Recognition Not Working
+- **Check internet connection** - Speech recognition requires cloud service
+- **Verify permissions** are still granted
+- **Restart the app** completely
+- **Clear app cache** (Settings > Apps > Therapod > Storage > Clear cache)
+- **Check for system updates**
+
+#### 3. Audio Quality Issues
+- **Connect external microphone** for better quality
+- **Adjust TV microphone sensitivity** if available
+- **Check for audio interference** from other devices
+- **Ensure stable WiFi connection** for voice processing
+
+#### 4. App Stops Listening
+- **Tap "Resume Mic" button** in the app
+- **Restart the session**
+- **Check internet connection**
+- **Verify permissions are still granted**
+- **Force stop and restart the app**
+
+### Android TV Specific Solutions
+
+#### 1. Hardware Microphone Issues
+```bash
+# Check if microphone is detected
+adb shell dumpsys audio | grep -i microphone
+
+# Check audio permissions
+adb shell dumpsys package com.TherapodWellnessTvApp.app | grep -i permission
+```
+
+#### 2. Software Configuration Issues
+- **Update Android TV** to latest version
+- **Clear app data** and reinstall
+- **Check developer options** for audio settings
+- **Verify HDMI audio settings** if using external audio
+
+#### 3. Network Issues
+- **Use stable WiFi** connection (minimum 5Mbps)
+- **Avoid mobile data** if possible
+- **Check for network interference**
+- **Test with different network** if available
 
 ## Verification Steps
 
@@ -52,26 +91,6 @@ Since this is a TV app that stays in the foreground:
 4. The app should respond automatically
 5. The microphone should stay active continuously
 6. No need to worry about background/foreground switching
-
-## Troubleshooting
-
-### Microphone Cuts Out
-1. **Check battery optimization settings**
-2. **Restart the app**
-3. **Clear app cache** (Settings > Apps > Therapod > Storage > Clear cache)
-4. **Check for system updates**
-
-### App Stops Listening
-1. **Tap "Resume Mic" button** in the app
-2. **Restart the session**
-3. **Check internet connection**
-4. **Verify permissions are still granted**
-
-### TV-Specific Issues
-1. **Check TV microphone input** in audio settings
-2. **Restart the TV app** if microphone stops working
-3. **Verify network connection** is stable
-4. **Check external microphone** if using one
 
 ## Advanced Settings
 
@@ -103,4 +122,31 @@ The app uses optimized audio services for TV applications:
 - **Simplified architecture** (no background services needed)
 - **TV-optimized audio configuration**
 
-These features ensure your microphone stays active continuously since the TV app remains in the foreground. 
+These features ensure your microphone stays active continuously since the TV app remains in the foreground.
+
+## Android TV Specific Configuration
+
+### Audio Mode Configuration
+The app automatically configures the optimal audio mode for Android TV:
+- **allowsRecordingIOS**: false (not applicable for Android)
+- **playsInSilentModeIOS**: false (not applicable for Android)
+- **staysActiveInBackground**: true (keeps audio active)
+- **shouldDuckAndroid**: false (prevents audio ducking)
+- **playThroughEarpieceAndroid**: false (uses speaker output)
+
+### Speech Recognition Configuration
+Android TV uses cloud-based speech recognition for better reliability:
+- **lang**: 'en-US'
+- **interimResults**: true
+- **continuous**: true
+- **maxAlternatives**: 3
+- **requiresOnDeviceRecognition**: false (uses cloud)
+- **partialResults**: true
+
+### Permission Requirements
+Android TV requires these permissions for microphone functionality:
+- `android.permission.RECORD_AUDIO`
+- `android.permission.MODIFY_AUDIO_SETTINGS`
+- `android.permission.BLUETOOTH` (for external mics)
+- `android.permission.BLUETOOTH_CONNECT` (for external mics)
+- `android.permission.BLUETOOTH_SCAN` (for external mics) 
