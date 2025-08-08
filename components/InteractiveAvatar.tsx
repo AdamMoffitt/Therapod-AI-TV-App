@@ -5,13 +5,16 @@ import {
   StyleSheet,
   TouchableOpacity,
   SafeAreaView,
+  BackHandler,
+  Alert,
+  Platform,
 } from "react-native";
 import {
   ExpoSpeechRecognitionModule,
   useSpeechRecognitionEvent,
 } from 'expo-speech-recognition';
 import { LiveKitRoom, VideoTrack, useTracks, isTrackReference } from "@livekit/react-native";
-import { therapodWebSocketService, fetchWelcomeMessage } from '../services/therapodWebsocketService';
+import { therapodWebSocketService, fetchWelcomeMessage } from '../services/TherapodWebsocketService';
 
 const API_CONFIG = {
   apiKey: "NDNmMDRlZDRlYjI3NDVjNjk3ODU3ZDVmZGMyNjk1OGItMTc1NDE0MjEyMQ==",
@@ -19,14 +22,15 @@ const API_CONFIG = {
 };
 
 interface InteractiveAvatarProps {
-  onSessionEnd: () => void;
+  onSessionEnd?: () => void;
   wsUrl?: string;
   token?: string;
   loading?: boolean;
-  userId?: string;
+  userId?: string | null;
+  therapistName?: string | null;
 }
 
-export default function InteractiveAvatar({ onSessionEnd, wsUrl, token, loading = false, userId }: InteractiveAvatarProps) {
+export default function InteractiveAvatar({ onSessionEnd, wsUrl, token, loading = false, userId, therapistName }: InteractiveAvatarProps) {
   const [isRecording, setIsRecording] = useState(false);
   const [recognizedText, setRecognizedText] = useState('');
   const [allRecognizedText, setAllRecognizedText] = useState<string[]>([]);
@@ -46,6 +50,32 @@ export default function InteractiveAvatar({ onSessionEnd, wsUrl, token, loading 
   const [avatarSessionToken, setAvatarSessionToken] = useState<string>('');
   const [avatarConnected, setAvatarConnected] = useState(false);
   
+  // Handle back button press
+  useEffect(() => {
+    const backHandler = BackHandler.addEventListener(
+      "hardwareBackPress",
+      () => {
+        if (onSessionEnd) {
+          Alert.alert("End Session", "Do you want to end this session?", [
+            {
+              text: "Cancel",
+              style: "cancel",
+            },
+            {
+              text: "End Session",
+              onPress: onSessionEnd,
+              style: "destructive",
+            },
+          ]);
+          return true; // Prevents default back action
+        }
+        return false;
+      }
+    );
+
+    return () => backHandler.remove();
+  }, [onSessionEnd]);
+
   // Start recording when component mounts
   useEffect(() => {
     const initializeAvatarSession = async () => {
@@ -635,15 +665,7 @@ export default function InteractiveAvatar({ onSessionEnd, wsUrl, token, loading 
           </View>
         </View>
         
-        {/* Close button */}
-        <TouchableOpacity
-          style={styles.hiddenCloseButton}
-          onPress={onSessionEnd}
-        >
-          <Text style={styles.hiddenCloseButtonText}>
-            End Session
-          </Text>
-        </TouchableOpacity>
+
       </SafeAreaView>
     );
   }
@@ -660,7 +682,7 @@ export default function InteractiveAvatar({ onSessionEnd, wsUrl, token, loading 
       video={false}
     >
       <RoomView 
-        onSessionEnd={onSessionEnd}
+        onSessionEnd={onSessionEnd || (() => {})}
         loading={loading}
         isRecording={isRecording}
         isListening={isListening}
@@ -725,16 +747,7 @@ const RoomView = ({
         </View>
       </View>
       
-      {/* Hidden close button for emergency use only */}
-      <TouchableOpacity
-        style={[styles.hiddenCloseButton, loading && styles.disabledButton]}
-        onPress={onSessionEnd}
-        disabled={loading}
-      >
-        <Text style={styles.hiddenCloseButtonText}>
-          {loading ? "Ending..." : "End Session"}
-        </Text>
-      </TouchableOpacity>
+
     </SafeAreaView>
   );
 };

@@ -33,7 +33,7 @@ import { db } from "@/firebase";
 import { getSelectedPod, saveSelectedPod, storage } from "@/utils/storage";
 import QRCode from "react-native-qrcode-svg";
 import * as Sentry from '@sentry/react-native';
-import MicrophoneDisplay from "./MicrophoneDisplay";
+import InteractiveAvatar from "./InteractiveAvatar";
 import Guide from "./Guide";
 // LiveKit imports removed - now using Guide.tsx for AI therapy
 
@@ -1259,7 +1259,7 @@ export default function HomeScreenView() {
     //   />
     // );
     return (
-    <MicrophoneDisplay 
+    <InteractiveAvatar 
       onSessionEnd={handleCloseSession}
       userId={currentUserId}
       therapistName={currentTherapistName}
