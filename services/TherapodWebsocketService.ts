@@ -45,6 +45,20 @@ class TherapodWebSocketService {
     }
     return TherapodWebSocketService.instance;
   }
+    /**
+   * Proactively establish WebSocket connection without sending a message
+   * This reduces latency for the first user message
+   */
+    public async preconnect(): Promise<void> {
+      try {
+        console.log("🚀 Preconnecting to Therapod WebSocket service...");
+        await this.getConnection();
+        console.log("✅ Therapod WebSocket preconnection successful");
+      } catch (error) {
+        console.warn("⚠️ Therapod WebSocket preconnection failed (will retry on first message):", error);
+      }
+    }
+
 
   private async createConnection(): Promise<WebSocket> {
     console.log("🔌 createConnection called - isConnecting:", this.isConnecting, "connectionPromise:", !!this.connectionPromise);
@@ -90,19 +104,7 @@ class TherapodWebSocketService {
         if (this.activeMessageHandler) {
           // Accumulate response data from multiple chunks
           this.activeMessageHandler.responseData += event.data + '\n';
-
-          // Reset the timeout for this message (backend is still responding)
-          clearTimeout(this.activeMessageHandler.timeout);
-          this.activeMessageHandler.timeout = setTimeout(() => {
-            console.log("Message response complete (timeout reached)");
-            const handler = this.activeMessageHandler;
-            this.activeMessageHandler = null;
-            if (handler) {
-              handler.resolve(handler.responseData.trim());
-            }
-            // Process next message in queue
-            this.processNextMessage();
-          }, 5000); // 5 second timeout for each chunk
+          // No processing here - let the backend close the connection when done
         }
       };
 
@@ -112,8 +114,17 @@ class TherapodWebSocketService {
         this.connectionPromise = null;
         this.isConnecting = false;
 
-        // Clear active message handler
-        if (this.activeMessageHandler) {
+        // If we have accumulated response data, resolve it (backend finished sending)
+        if (this.activeMessageHandler && this.activeMessageHandler.responseData.trim()) {
+          console.log("Message response complete (connection closed with data)");
+          const handler = this.activeMessageHandler;
+          this.activeMessageHandler = null;
+          clearTimeout(handler.timeout);
+          handler.resolve(handler.responseData.trim());
+          // Process next message in queue
+          this.processNextMessage();
+        } else if (this.activeMessageHandler) {
+          // Connection closed without data - this is an error
           clearTimeout(this.activeMessageHandler.timeout);
           this.activeMessageHandler.reject(new Error('WebSocket connection closed'));
           this.activeMessageHandler = null;

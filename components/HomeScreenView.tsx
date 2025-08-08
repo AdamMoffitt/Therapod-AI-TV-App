@@ -1,4 +1,4 @@
-import React, { useEffect, useState, useRef, useCallback, useMemo } from "react";
+import React, { useEffect, useState, useRef, useCallback } from "react";
 import {
   View,
   Text,
@@ -6,7 +6,6 @@ import {
   TouchableOpacity,
   Dimensions,
   FlatList,
-  Animated,
   Pressable,
   findNodeHandle,
   Button,
@@ -33,25 +32,12 @@ import { db } from "@/firebase";
 import { getSelectedPod, saveSelectedPod, storage } from "@/utils/storage";
 import QRCode from "react-native-qrcode-svg";
 import * as Sentry from '@sentry/react-native';
-import InteractiveAvatar from "./InteractiveAvatar";
-import Guide from "./Guide";
-// LiveKit imports removed - now using Guide.tsx for AI therapy
-
-// Microphone Display Component removed - using imported component
-
-// const defaultVideoSource =
-//   "https://firebasestorage.googleapis.com/v0/b/therapod-454503.firebasestorage.app/o/Mindful%20moment%20final.mp4?alt=media&token=91a4dcbf-d68c-4796-b6fe-551e80720fec";
-// const defaultVideoSource = 'https://firebasestorage.googleapis.com/v0/b/therapod-454503.firebasestorage.app/o/defaultVideo.mp4?alt=media&token=3ede3c5d-fa13-4400-945a-21a09d4fa1cb'
-// const defaultVideoSource = require('@/assets/videos/defaultVideo.mp4')
+import StartSession from "./StartSession";
 
 const defaultVideoSource = 'https://firebasestorage.googleapis.com/v0/b/therapod-454503.firebasestorage.app/o/defaultVideo_tv_safe.mp4?alt=media&token=b571b26b-b6ff-4f13-9b13-ef8045d5543c'
 const { height, width } = Dimensions.get("screen");
 
-// HeyGen API Configuration
-const API_CONFIG = {
-  serverUrl: "https://api.heygen.com",
-  apiKey: process.env.EXPO_PUBLIC_HEYGEN_API_KEY || "your_api_key_here",
-};
+// Note: HeyGen API configuration moved to HeyGenAvatarStreamingService.ts
 
 interface Pod {
   id: string;
@@ -65,12 +51,11 @@ interface MediaInfo {
   id: string | null;
 }
 
-// RoomView component removed - now using Guide.tsx for AI therapy sessions
+// Note: RoomView component moved to InteractiveAvatar.tsx
 
 export default function HomeScreenView() {
   const [pods, setPods] = useState<Pod[]>([]);
   const [selectedPod, setSelectedPod] = useState<string | undefined>(undefined);
-  const [countdown, setCountdown] = useState<number | null>(null);
   const [videoSource, setVideoSource] = useState(defaultVideoSource);
   const [videoTitle, setVideoTitle] = useState("Mindful Meditation");
   const [showWellnessScore, setShowWellnessScore] = useState(false);
@@ -85,230 +70,25 @@ export default function HomeScreenView() {
   const [currentTherapistId, setCurrentTherapistId] = useState<string | null>(null);
   const [currentSessionId, setCurrentSessionId] = useState<string | null>(null);
   const [showErrorPopup, setShowErrorPopup] = useState<boolean>(false);
+  const [currentTherapodData, setCurrentTherapodData] = useState<any | null>(null);
 
-  // HeyGen LiveKit state
-  const [wsUrl, setWsUrl] = useState<string>("");
-  const [token, setToken] = useState<string>("");
-  const [sessionToken, setSessionToken] = useState<string>("");
-  const [sessionId, setSessionId] = useState<string>("");
-  const [connected, setConnected] = useState(false);
-  const [text, setText] = useState("");
-  const [loading, setLoading] = useState(false);
-  const [speaking, setSpeaking] = useState(false);
-  const [sessionDurationMinutes, setSessionDurationMinutes] = useState(0);
-  const keepAliveInterval = useRef<NodeJS.Timeout | null>(null);
-  const durationTracker = useRef<NodeJS.Timeout | null>(null);
+  // Note: HeyGen session state variables moved to InteractiveAvatar.tsx
 
   const recentVideos = useRef<MediaInfo[]>([]);
   const videoRef = useRef<Video>(null);
-  const countdownAnimation = useRef(new Animated.Value(1)).current;
+  // Note: Countdown animation moved to StartSession.tsx
   const wellnessTimerInterval = useRef<NodeJS.Timeout | null>(null);
   const previousVideoSource = useRef<string>(defaultVideoSource);
   const isVideoLoaded = useRef<boolean>(false);
-  const isInitializingSession = useRef<boolean>(false);
+  // Note: isInitializingSession moved to InteractiveAvatar.tsx
 
-  const createAISession = async (podId: string, therapodData: any) => {
-    try {
-      // Get therapod data to extract location
-      const therapodRef = doc(db, "therapods", podId);
-      const therapodSnapshot = await getDoc(therapodRef);
-      
-      if (!therapodSnapshot.exists()) {
-        console.error("Therapod not found");
-        return;
-      }
-      
-      const therapodInfo = therapodSnapshot.data();
-      
-      // Create session document
-      const sessionData = {
-        createdAt: serverTimestamp(),
-        date: new Date().toISOString().split('T')[0], // YYYY-MM-DD format
-        duration: "30 minutes",
-        location: therapodInfo.location || podId.toLowerCase(),
-        podId: podId,
-        points: 0,
-        sessionType: "ai_therapy",
-        status: "active",
-        therapist: therapodData.current_user?.therapist_id || "N6j3amuwz99kyJdOma4b",
-        time: new Date().toLocaleTimeString('en-US', { 
-          hour12: true, 
-          hour: 'numeric', 
-          minute: '2-digit', 
-          second: '2-digit' 
-        }).toLowerCase(),
-        updatedAt: serverTimestamp(),
-        userId: therapodData.current_user?.id || null
-      };
-      
-      // Add session to sessions collection
-      const sessionRef = await addDoc(collection(db, "sessions"), sessionData);
-      const sessionId = sessionRef.id;
-      
-      console.log("Created session with ID:", sessionId);
-      
-      // Update therapod with session_id and set status to active
-      await updateDoc(therapodRef, {
-        "current_user.session_id": sessionId,
-        status: "active",
-        session_type: "ai_therapy"
-      });
-      
-      console.log("Updated therapod with session_id and status");
-      
-    } catch (error) {
-      console.error("Error creating AI session:", error);
-    }
-  };
 
-  // HeyGen API Functions
-  const getSessionToken = async () => {
-    console.log('Making request to create token...');
-    console.log('API Key (first 10 chars):', API_CONFIG.apiKey.substring(0, 10) + '...');
-    
-    const response = await fetch(
-      `${API_CONFIG.serverUrl}/v1/streaming.create_token`,
-      {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          Authorization: `Bearer ${API_CONFIG.apiKey}`,
-        },
-      }
-    );
-    
-    console.log('Token response status:', response.status);
-    
-    if (!response.ok) {
-      const errorText = await response.text();
-      console.error('Token creation failed:', response.status, errorText);
-      throw new Error(`Failed to create token: ${response.status} ${errorText}`);
-    }
-    
-    const data = await response.json();
-    console.log('Token response:', JSON.stringify(data, null, 2));
-    
-    if (!data || !data.data || !data.data.token) {
-      console.error('Invalid token response structure:', data);
-      throw new Error('Invalid response: missing token');
-    }
-    
-    return data.data.token;
-  };
+  // Note: All HeyGen API functions moved to HeyGenAvatarStreamingService.ts
+  // These functions are deprecated and should be removed
 
-  const createNewSession = async (sessionToken: string) => {
-    console.log('Creating new session with token...');
-    
-    const response = await fetch(`${API_CONFIG.serverUrl}/v1/streaming.new`, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        Authorization: `Bearer ${sessionToken}`,
-      },
-      body: JSON.stringify({
-        quality: "high",
-        version: "v2", 
-        video_encoding: "H264",
-        avatar_id: "Ann_Therapist_public", // Use the therapist avatar
-        participant_name: `therapy-user-${Date.now()}`, // Unique participant to prevent conflicts
-      }),
-    });
-    
-    console.log('New session response status:', response.status);
-    console.log('New session response headers:', response.headers);
-    
-    if (!response.ok) {
-      const errorText = await response.text();
-      console.error('Session creation failed:', response.status, errorText);
-      throw new Error(`Failed to create session: ${response.status} ${errorText}`);
-    }
-    
-    const data = await response.json();
-    console.log('New session full response:', JSON.stringify(data, null, 2));
-    
-    if (!data || !data.data) {
-      console.error('Invalid session response - no data property:', data);
-      throw new Error('Invalid response: missing data property');
-    }
-    
-    if (!data.data.session_id) {
-      console.error('Invalid session response - no session_id:', data.data);
-      throw new Error('Invalid response: missing session_id in data');
-    }
-    
-    console.log('Successfully created session:', data.data.session_id);
-    return data.data;
-  };
-
-  const startStreamingSession = async (
-    sessionId: string,
-    sessionToken: string
-  ) => {
-    console.log('Starting streaming session...');
-    
-    const response = await fetch(`${API_CONFIG.serverUrl}/v1/streaming.start`, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        Authorization: `Bearer ${sessionToken}`,
-      },
-      body: JSON.stringify({
-        session_id: sessionId,
-      }),
-    });
-    
-    console.log('Start streaming response status:', response.status);
-    
-    if (!response.ok) {
-      const errorText = await response.text();
-      console.error('Start streaming failed:', response.status, errorText);
-      throw new Error(`Failed to start streaming: ${response.status} ${errorText}`);
-    }
-    
-    const data = await response.json();
-    console.log('Start streaming full response:', JSON.stringify(data, null, 2));
-    
-    // HeyGen streaming.start may return success with data: null
-    // This is actually normal - it just starts the streaming session
-    if (!data || (data.code !== 100 && data.code !== 200)) {
-      console.error('Invalid start streaming response:', data);
-      throw new Error(`Invalid response: ${data?.message || 'Unknown error'}`);
-    }
-    
-    console.log('✅ Streaming session started successfully - this creates the LiveKit room');
-    return data; // Return the full response, data may be null and that's OK
-  };
-
-  const sendText = useCallback(async () => {
-    try {
-      setSpeaking(true);
-      const response = await fetch(`${API_CONFIG.serverUrl}/v1/streaming.task`, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          Authorization: `Bearer ${sessionToken}`,
-        },
-        body: JSON.stringify({
-          session_id: sessionId,
-          text: text,
-          task_type: "talk",
-        }),
-      });
-      const data = await response.json();
-      setText("");
-    } catch (error) {
-      console.error("Error sending text:", error);
-    } finally {
-      setSpeaking(false);
-    }
-  }, [sessionId, sessionToken, text]);
-
-  // Handle closing HeyGen session - moved to top level to avoid Rules of Hooks violation
+  // Handle closing session - now delegated to StartSession/InteractiveAvatar
   const handleCloseSession = useCallback(async () => {
-    console.log('🛑 End Session clicked - closing HeyGen session and setting pod to idle');
-    
-    // Close the HeyGen session
-    await closeSession();
+    console.log('🛑 End Session clicked - returning to meditation view');
     
     // Set pod status to idle in Firebase
     if (selectedPod) {
@@ -329,269 +109,11 @@ export default function HomeScreenView() {
     }
   }, [selectedPod]);
 
-  // Memoize LiveKit callbacks to prevent reconnection on every render
-  const handleLiveKitConnected = useCallback(() => {
-    console.log('✅ LiveKit room connected successfully');
-    
-    // Send initial greeting to activate the avatar (streaming session already started during init)
-    if (currentTherapistName && sessionId && sessionToken) {
-      setTimeout(async () => {
-        try {
-          console.log('🤖 Sending initial greeting to activate avatar...');
-          const response = await fetch(`${API_CONFIG.serverUrl}/v1/streaming.task`, {
-            method: "POST",
-            headers: {
-              "Content-Type": "application/json",
-              Authorization: `Bearer ${sessionToken}`,
-            },
-            body: JSON.stringify({
-              session_id: sessionId,
-              text: `Hello! I'm ready to start our 30-minute therapy session. How are you feeling today?`,
-              task_type: "talk",
-            }),
-          });
-          const data = await response.json();
-          console.log('✅ Initial greeting sent successfully:', data);
-          
-          // Start a keep-alive mechanism to maintain 30-minute session
-          console.log('🔄 Starting 30-minute keep-alive mechanism...');
-          
-          // Set up aggressive keep-alive interval every 2 minutes 
-          // Since HeyGen's timeout parameters don't work via REST API
-          if (keepAliveInterval.current) {
-            clearInterval(keepAliveInterval.current);
-          }
-          
-          keepAliveInterval.current = setInterval(() => {
-            console.log('⏰ 2-minute keep-alive timer triggered');
-            keepSessionAlive();
-          }, 120000); // 2 minutes in milliseconds
-          
-          console.log('✅ Keep-alive mechanism active - pinging every 2 minutes to maintain session');
-          console.log('ℹ️ Note: HeyGen may still disconnect after responses - this is their default behavior');
-          
-          // Start session duration tracker
-          const sessionStartTime = Date.now();
-          durationTracker.current = setInterval(() => {
-            const elapsedMinutes = Math.floor((Date.now() - sessionStartTime) / 60000);
-            setSessionDurationMinutes(elapsedMinutes);
-            
-            if (elapsedMinutes >= 30) {
-              if (durationTracker.current) {
-                clearInterval(durationTracker.current);
-                durationTracker.current = null;
-              }
-              console.log('⏰ 30-minute session limit reached');
-            }
-          }, 60000); // Update every minute
-          
-        } catch (error) {
-          console.error('❌ Failed to send initial greeting:', error);
-        }
-      }, 2000); // Give LiveKit a moment to fully establish
-    }
-  }, [currentTherapistName, sessionId, sessionToken]);
-
-  const handleLiveKitDisconnected = useCallback((reason?: any) => {
-    console.log('❌ LiveKit room disconnected');
-    console.log('Disconnection reason:', reason);
-    
-    // Don't handle disconnects during AI therapy sessions (now using Guide.tsx)
-    if (sessionType === "ai_therapy") {
-      console.log('🛡️ Ignoring LiveKit disconnect during AI therapy session (handled by Guide.tsx)');
-      return;
-    }
-    
-    // Map reason codes to human-readable messages
-    const reasonMessages: { [key: number]: string } = {
-      1: 'UNKNOWN',
-      2: 'CLIENT_INITIATED', 
-      3: 'DUPLICATE_IDENTITY',
-      4: 'SERVER_SHUTDOWN',
-      5: 'PARTICIPANT_REMOVED',
-      6: 'ROOM_DELETED',
-      7: 'STATE_MISMATCH',
-      8: 'JOIN_FAILURE',
-      9: 'MIGRATION',
-      10: 'SIGNAL_CLOSE',
-      11: 'ROOM_CLOSED',
-      12: 'USER_UNAVAILABLE',
-    };
-    
-    const reasonName = reasonMessages[reason] || 'UNKNOWN';
-    console.log('Disconnection reason name:', reasonName);
-    
-    // Handle specific disconnection reasons
-    if (reason === 5) { // PARTICIPANT_REMOVED
-      console.log('🔍 PARTICIPANT_REMOVED - This usually means:');
-      console.log('  1. HeyGen session timeout (normal after ~5-10 minutes)');
-      console.log('  2. HeyGen detected duplicate participant identity');
-      console.log('  3. HeyGen streaming session was ended by server');
-      console.log('  4. Avatar generation completed');
-      
-      // For PARTICIPANT_REMOVED, this indicates session ended normally
-      // With 30-minute timeout, this should only happen at the end of therapy session
-      console.log('⚠️ Session ended by HeyGen (30-minute timeout or manual termination)');
-      console.log('ℹ️ This is expected behavior - session completed normally');
-      
-      // Don't auto-restart - let the session end naturally
-      // User can manually start a new session if needed
-    }
-    
-    // Log additional context for debugging
-    console.log('Current session state:', {
-      sessionId,
-      sessionToken: sessionToken ? 'Present' : 'Missing',
-      connected,
-      loading,
-      wsUrl: wsUrl ? 'Present' : 'Missing',
-      token: token ? 'Present' : 'Missing'
-    });
-    
-    // Don't automatically try to reconnect, let user retry manually
-    setConnected(false);
-    isInitializingSession.current = false;
-  }, [sessionId, sessionToken, connected, loading, wsUrl, token]);
-
-  const handleLiveKitError = useCallback((error: any) => {
-    console.error('🚨 LiveKit room error:', error);
-    console.error('Error details:', JSON.stringify(error, null, 2));
-    
-    // Don't handle errors during AI therapy sessions (now using Guide.tsx)
-    if (sessionType === "ai_therapy") {
-      console.log('🛡️ Ignoring LiveKit error during AI therapy session (handled by Guide.tsx)');
-      return;
-    }
-    
-    // Provide specific guidance based on error type
-    if (error?.status === 404 || error?.message?.includes('room does not exist')) {
-      console.error('🔍 Room does not exist - this usually means:');
-      console.error('  1. startStreamingSession was not called successfully');
-      console.error('  2. There was a delay between room creation and connection');
-      console.error('  3. The HeyGen session was terminated');
-    }
-    
-    if (error?.name === 'ConnectionError') {
-      console.error('🌐 Connection error - check network and server URL');
-    }
-    
-    // Reset connection state on error
-    setConnected(false);
-    // Prevent re-initialization on error
-    isInitializingSession.current = false;
-  }, []);
-
-
-
-  // Memoize LiveKit options to prevent reconnection on every render
-  const liveKitOptions = useMemo(() => ({
-    adaptiveStream: { pixelDensity: "screen" as const },
-    // Add additional connection reliability options
-    autoSubscribe: true,
-  }), []);
-
-  // Validate LiveKit token for debugging - moved to top level to avoid Rules of Hooks violation
-  useEffect(() => {
-    if (token && token.length > 0 && sessionType === "ai_therapy") {
-      try {
-        const tokenParts = token.split('.');
-        if (tokenParts.length === 3) {
-          const payload = JSON.parse(atob(tokenParts[1]));
-          const now = Math.floor(Date.now() / 1000);
-          console.log('🔗 LiveKit token info:', {
-            exp: payload.exp,
-            now: now,
-            timeUntilExpiry: payload.exp ? payload.exp - now : 'no expiry',
-            room: payload.video?.room,
-            identity: payload.sub
-          });
-          
-          if (payload.exp && payload.exp < now) {
-            console.error('⚠️ Token has expired!');
-          }
-        }
-      } catch (error) {
-        console.error('Failed to decode token:', error);
-      }
-    }
-  }, [token, sessionType]);
-
-  // Keep-alive function to maintain 30-minute session
-  const keepSessionAlive = useCallback(async () => {
-    if (!sessionId || !sessionToken) {
-      return;
-    }
-
-    try {
-      console.log('🔄 Sending keep-alive ping to maintain session...');
-      // Send empty text task to keep session active
-      const response = await fetch(`${API_CONFIG.serverUrl}/v1/streaming.task`, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          Authorization: `Bearer ${sessionToken}`,
-        },
-        body: JSON.stringify({
-          session_id: sessionId,
-          text: "", // Empty text to reset idle timeout without visible output
-          task_type: "talk",
-        }),
-      });
-
-      if (response.ok) {
-        console.log('✅ Keep-alive ping successful - session extended');
-      } else {
-        console.log('⚠️ Keep-alive ping failed - session may be ending');
-      }
-    } catch (error) {
-      console.error('❌ Keep-alive ping error:', error);
-    }
-  }, [sessionId, sessionToken]);
-
-  const closeSession = async () => {
-    try {
-      setLoading(true);
-      
-      // Clear keep-alive interval and duration tracker
-      if (keepAliveInterval.current) {
-        clearInterval(keepAliveInterval.current);
-        keepAliveInterval.current = null;
-        console.log('🛑 Keep-alive mechanism stopped');
-      }
-      if (durationTracker.current) {
-        clearInterval(durationTracker.current);
-        durationTracker.current = null;
-        console.log('🛑 Duration tracker stopped');
-      }
-      
-      const response = await fetch(`${API_CONFIG.serverUrl}/v1/streaming.stop`, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          Authorization: `Bearer ${sessionToken}`,
-        },
-        body: JSON.stringify({
-          session_id: sessionId,
-        }),
-      });
-
-      // Reset states
-      setConnected(false);
-      setSessionId("");
-      setSessionToken("");
-      setWsUrl("");
-      setToken("");
-      setText("");
-      setSpeaking(false);
-    } catch (error) {
-      console.error("Error closing session:", error);
-    } finally {
-      setLoading(false);
-    }
-  };
+  // Note: All LiveKit and HeyGen session management moved to InteractiveAvatar.tsx
+  // These functions are deprecated and should be removed
 
   useEffect(() => {
-    // WebRTC globals registration removed - now handled by Guide.tsx
+    // Note: WebRTC globals registration moved to InteractiveAvatar.tsx
 
     if (Platform.OS === 'android' && Platform.isTV) {
       // Import Audio from expo-av
@@ -727,7 +249,7 @@ export default function HomeScreenView() {
 
   useEffect(() => {
     let unsubscribe = () => {};
-    let countdownInterval: NodeJS.Timeout;
+    // Note: countdownInterval moved to StartSession.tsx
 
     if (selectedPod) {
       const therapodRef = doc(db, "therapods", selectedPod);
@@ -735,7 +257,7 @@ export default function HomeScreenView() {
       unsubscribe = onSnapshot(therapodRef, (docSnapshot) => {
         if (docSnapshot.exists()) {
           const therapodData = docSnapshot.data();
-
+          
           // Store current user ID and session ID for WebView
           setCurrentUserId(therapodData.current_user?.id || null);
           setCurrentSessionId(therapodData.current_user?.session_id || null);
@@ -743,18 +265,31 @@ export default function HomeScreenView() {
           const therapistId = therapodData.current_user?.therapist_id || "N6j3amuwz99kyJdOma4b";
           const therapistRef = doc(db, "therapists", therapistId);
           getDoc(therapistRef).then((therapistSnapshot) => {
+            let therapistName = null;
             if (therapistSnapshot.exists()) {
               const therapistData = therapistSnapshot.data();
-              setCurrentTherapistName(therapistData.name || null);
+              therapistName = therapistData.name || null;
               setCurrentTherapistId(therapistData.key);
             } else {
-              setCurrentTherapistName(null);
               setCurrentTherapistId(null);
             }
+            
+            // Store therapod data with therapist name for StartSession
+            setCurrentTherapodData({
+              ...therapodData,
+              therapist_name: therapistName
+            });
+            setCurrentTherapistName(therapistName);
           }).catch((error) => {
             console.error("Error fetching therapist data:", error);
-            setCurrentTherapistName(null);
             setCurrentTherapistId(null);
+            setCurrentTherapistName(null);
+            
+            // Store therapodData with null therapist name
+            setCurrentTherapodData({
+              ...therapodData,
+              therapist_name: null
+            });
           });
           // Set session type and pod status
           if (therapodData.session_type === "ai_therapy") {
@@ -775,42 +310,19 @@ export default function HomeScreenView() {
             setPodStatus(therapodData.status || "idle");
           }
 
-          // Handle active sessions with countdown
+          // Handle active sessions
           if (therapodData.status === "active") {
             // Reset wellness score view
             setShowWellnessScore(false);
             
-            // Start countdown for all active sessions
-            setCountdown(10);
-            
             if (therapodData.session_type === "ai_therapy") {
-              // Create session if session_id is not present
-              if (!therapodData.current_user?.session_id) {
-                createAISession(selectedPod, therapodData);
-              }
+              // Note: Firebase session creation moved to StartSession.tsx
+              // This function call is deprecated and should be removed
               
-              // Set up countdown timer for AI therapy (1 second intervals)
-              countdownInterval = setInterval(() => {
-                setCountdown((prev) => {
-                  if (prev! <= 1) {
-                    clearInterval(countdownInterval);
-                    return null;
-                  }
-                  return prev! - 1;
-                });
-              }, 1000);
+              // StartSession will handle countdown and session creation
             } else if (therapodData.now_playing && therapodData.now_playing !== "") {
-              // Set up countdown timer for meditation (2.5 second intervals)
-              countdownInterval = setInterval(() => {
-                setCountdown((prev) => {
-                  if (prev! <= 1) {
-                    clearInterval(countdownInterval);
-                    loadMediaVideo(therapodData.now_playing);
-                    return null;
-                  }
-                  return prev! - 1;
-                });
-              }, 2500);
+              // Load meditation video immediately
+              loadMediaVideo(therapodData.now_playing);
             }
           } else if (therapodData.status === "completed") {
             // Session has been completed - show wellness score
@@ -838,141 +350,13 @@ export default function HomeScreenView() {
 
     return () => {
       unsubscribe();
-      if (countdownInterval) clearInterval(countdownInterval);
     };
   }, [selectedPod]);
 
-  // Animation for countdown
-  useEffect(() => {
-    if (countdown !== null) {
-      // Reset the animation value
-      countdownAnimation.setValue(1);
+  // Note: Countdown animation moved to StartSession.tsx
 
-      // Start the pulse animation
-      Animated.sequence([
-        Animated.timing(countdownAnimation, {
-          toValue: 1.2,
-          duration: 300,
-          useNativeDriver: true,
-        }),
-        Animated.timing(countdownAnimation, {
-          toValue: 1,
-          duration: 700,
-          useNativeDriver: true,
-        }),
-      ]).start();
-    }
-  }, [countdown]);
-
-  // HeyGen session initialization (LEGACY - now using Guide.tsx for AI therapy)
-  useEffect(() => {
-    const initializeSession = async () => {
-      console.log('HeyGen useEffect triggered - sessionType:', sessionType, 'podStatus:', podStatus, 'countdown:', countdown, 'connected:', connected, 'loading:', loading, 'sessionId:', sessionId);
-      
-      // NOTE: This should not run for AI therapy sessions since we now use Guide.tsx
-      if (sessionType === "ai_therapy") {
-        console.log('🛡️ Skipping legacy HeyGen initialization - using Guide.tsx for AI therapy');
-        return; // Exit early to prevent interference with Guide.tsx
-      }
-      
-      // This code should only run for non-AI therapy sessions (legacy meditation mode)
-      if (sessionType === "meditation" && podStatus === "active" && countdown === null && !connected && !loading && !sessionId && !isInitializingSession.current) {
-        try {
-          isInitializingSession.current = true;
-          setLoading(true);
-          console.log('🚀 Starting HeyGen session initialization...');
-
-          // Get session token
-          const token = await getSessionToken();
-          setSessionToken(token);
-          console.log('Got session token');
-
-          // Create new session with unique participant identity
-          const sessionData = await createNewSession(token);
-          setSessionId(sessionData.session_id);
-          console.log('Created session:', sessionData.session_id);
-          console.log('Session will use participant identity:', `user-${currentUserId}-${Date.now()}`);
-
-          // Use data directly from session creation
-          setWsUrl(sessionData.url || '');
-          setToken(sessionData.access_token || '');
-          console.log('Session data configured - URL:', sessionData.url);
-          console.log('Session data configured - Token:', sessionData.access_token ? 'Present' : 'Missing');
-
-          // Start streaming to create the LiveKit room - this is REQUIRED for room to exist
-          try {
-            console.log('🎬 Starting streaming session to create LiveKit room...');
-            console.log('Using session_id:', sessionData.session_id);
-            console.log('Using session_token:', token ? 'Present' : 'Missing');
-            console.log('Will connect to room URL:', sessionData.url);
-            
-            const streamData = await startStreamingSession(sessionData.session_id, token);
-            console.log('✅ Streaming session started successfully, LiveKit room created');
-            console.log('Stream data received:', streamData);
-            
-            // Wait a moment for the LiveKit room to be fully provisioned
-            console.log('⏳ Waiting for LiveKit room to be fully provisioned...');
-            await new Promise(resolve => setTimeout(resolve, 3000)); // Increased delay for stability
-            console.log('✅ Room provisioning delay completed');
-          } catch (error) {
-            console.error('❌ Failed to start streaming session:', error);
-            
-            // Log the full error details
-            if (error instanceof Error) {
-              console.error('Error message:', error.message);
-              console.error('Error stack:', error.stack);
-            }
-            
-            // Don't throw immediately - try to continue with LiveKit connection
-            // Sometimes the room exists even if streaming start has issues
-            console.log('⚠️ Continuing with LiveKit connection despite streaming error...');
-            
-            // Still wait a bit for potential room creation
-            await new Promise(resolve => setTimeout(resolve, 2000));
-          }
-
-          setConnected(true);
-          isInitializingSession.current = false; // Mark as completed successfully
-          console.log('✅ HeyGen session initialization completed successfully');
-
-        } catch (error) {
-          console.error('Error initializing session:', error);
-          
-          // More specific error handling
-          let errorMessage = 'Failed to connect to the AI therapist. Please try again.';
-          if (error instanceof Error) {
-            if (error.message.includes('API key')) {
-              errorMessage = 'API configuration error. Please check your settings.';
-            } else if (error.message.includes('network') || error.message.includes('fetch')) {
-              errorMessage = 'Network connection error. Please check your internet connection.';
-            } else if (error.message.includes('session')) {
-              errorMessage = 'Session creation failed. Please try again.';
-            }
-          }
-          
-          Alert.alert(
-            'Connection Error',
-            errorMessage,
-            [
-              { text: 'Retry', onPress: () => {
-                // Reset and try again
-                setConnected(false);
-                setLoading(false);
-                isInitializingSession.current = false;
-                // The useEffect will trigger again automatically
-              }},
-              { text: 'Back to Menu', onPress: handleReturnToMeditation }
-            ]
-          );
-        } finally {
-          setLoading(false);
-          isInitializingSession.current = false;
-        }
-      }
-    };
-
-    initializeSession();
-  }, [sessionType, podStatus, countdown]);
+  // Note: HeyGen session initialization moved to StartSession.tsx
+  // This useEffect is deprecated and should be removed
 
   // Wellness screen auto-restart timer
   useEffect(() => {
@@ -1010,43 +394,6 @@ export default function HomeScreenView() {
     };
   }, [showWellnessScore]);
 
-  // HeyGen session cleanup
-  useEffect(() => {
-    return () => {
-      if (sessionId && sessionToken) {
-        closeSession().catch(console.error);
-      }
-    };
-  }, [sessionId, sessionToken]);
-
-  // Reset HeyGen state when leaving AI therapy
-  useEffect(() => {
-    if (sessionType !== "ai_therapy" && (connected || sessionId || sessionToken)) {
-      console.log('Resetting HeyGen state - sessionType changed to:', sessionType);
-      setConnected(false);
-      setSessionId("");
-      setSessionToken("");
-      setWsUrl("");
-      setToken("");
-      setText("");
-      setSpeaking(false);
-      setLoading(false);
-      setSessionDurationMinutes(0); // Reset session duration
-      isInitializingSession.current = false;
-      
-      // Clear keep-alive interval and duration tracker when leaving AI therapy
-      if (keepAliveInterval.current) {
-        clearInterval(keepAliveInterval.current);
-        keepAliveInterval.current = null;
-        console.log('🛑 Keep-alive mechanism stopped (session type changed)');
-      }
-      if (durationTracker.current) {
-        clearInterval(durationTracker.current);
-        durationTracker.current = null;
-        console.log('🛑 Duration tracker stopped (session type changed)');
-      }
-    }
-  }, [sessionType, connected, sessionId, sessionToken]);
 
   const loadMediaVideo = async (mediaId: string) => {
     setIsVideoLoading(true); // Start loading indicator
@@ -1249,53 +596,20 @@ export default function HomeScreenView() {
     );
   }
 
-  // Show AI Therapy with Guide component
-  if (sessionType === "ai_therapy" && podStatus === "active" && countdown === null) {
-    // return (
-    //   <Guide 
-    //     onSessionEnd={handleCloseSession}
-    //     userId={currentUserId}
-    //     therapistName={currentTherapistName}
-    //   />
-    // );
+  // Show AI Therapy with StartSession component
+  if (sessionType === "ai_therapy" && podStatus === "active") {
     return (
-    <InteractiveAvatar 
+    <StartSession 
       onSessionEnd={handleCloseSession}
-      userId={currentUserId}
-      therapistName={currentTherapistName}
+      countdown={10}
+      podId={selectedPod}
+      therapodData={currentTherapodData}
      />
     );
   }
 
-  // Show countdown screen
-  if (countdown !== null) {
-    return (
-      <View style={styles.countdownContainer}>
-        <Text style={styles.countdownTitle}>
-          Your session is about to begin
-        </Text>
-        <Animated.Text
-          style={[
-            styles.countdownNumber,
-            { transform: [{ scale: countdownAnimation }] },
-          ]}
-        >
-          {countdown}
-        </Animated.Text>
-        <Text style={styles.countdownSubtitle}>
-          Take a deep breath and prepare...
-        </Text>
-          <View style={styles.disclaimerContainer}>
-            <Text style={styles.disclaimerText}>
-              Therapod AI is not a licensed therapist and does not provide clinical diagnosis, treatment, or therapy services.
-            </Text>
-            <Text style={styles.disclaimerText}>
-              If you are in crisis or need professional support, please consult a licensed provider.
-            </Text>
-          </View>
-      </View>
-    );
-  }
+  // Note: Countdown screen moved to StartSession.tsx
+  // This countdown logic is deprecated and should be removed
 
   // Show wellness score screen with auto-restart countdown
   if (showWellnessScore) {
@@ -1479,31 +793,7 @@ const styles = StyleSheet.create({
     height: "100%",
     width: "100%",
   },
-  countdownContainer: {
-    flex: 1,
-    backgroundColor: "#F5DEB3",
-    justifyContent: "center",
-    alignItems: "center",
-    padding: 20,
-  },
-  countdownTitle: {
-    fontSize: 24,
-    fontWeight: "600",
-    color: "#5C4033",
-    marginBottom: 30,
-    textAlign: "center",
-  },
-  countdownNumber: {
-    fontSize: 80,
-    fontWeight: "bold",
-    color: "#A67B5B",
-    marginVertical: 30,
-  },
-  countdownSubtitle: {
-    fontSize: 18,
-    color: "#5C4033",
-    textAlign: "center",
-  },
+  // Note: Countdown styles moved to StartSession.tsx
   wellnessContainer: {
     flex: 1,
     backgroundColor: "#FFF8F0",
