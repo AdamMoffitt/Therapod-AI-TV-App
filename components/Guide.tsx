@@ -18,6 +18,7 @@ import {
   ExpoSpeechRecognitionModule,
   useSpeechRecognitionEvent,
 } from 'expo-speech-recognition';
+import AudioControl from '../types/AudioControl';
 
 import { registerGlobals } from "@livekit/react-native";
 import {
@@ -51,7 +52,7 @@ export default function Guide({ onSessionEnd, userId, therapistName }: GuideProp
   const [text, setText] = useState("");
   const [webSocket, setWebSocket] = useState<WebSocket | null>(null);
   const [loading, setLoading] = useState(false);
-  const [speaking, setSpeaking] = useState(false);
+
   const [isRecording, setIsRecording] = useState(false);
   const [voiceModeEnabled, setVoiceModeEnabled] = useState(true); // Default to voice mode
   const [recognizedText, setRecognizedText] = useState('');
@@ -64,6 +65,9 @@ export default function Guide({ onSessionEnd, userId, therapistName }: GuideProp
   const [echoPreventionEnabled, setEchoPreventionEnabled] = useState(true);
   const [avatarSpeakingStartTime, setAvatarSpeakingStartTime] = useState<number | null>(null);
   const [sessionInitialized, setSessionInitialized] = useState(false);
+  const [isRestarting, setIsRestarting] = useState(false);
+  const [ignoreSpeechResults, setIgnoreSpeechResults] = useState(false);
+  const [allSpeechResults, setAllSpeechResults] = useState<string[]>([]);
   
   // Ref for interim timer
   const interimTimerRef = useRef<NodeJS.Timeout | null>(null);
@@ -130,13 +134,13 @@ export default function Guide({ onSessionEnd, userId, therapistName }: GuideProp
       }
     }, 3000);
 
-    // Set up periodic microphone health check for always-on mode
+    // Set up periodic microphone health check for always-on mode (less frequent to reduce beeping)
     const microphoneHealthCheck = setInterval(() => {
       if (conversationMode === 'always_on' && voiceModeEnabled && !avatarSpeaking && !micPausedForAvatar && !isRecording) {
-        console.log('🔍 Health check: Ensuring microphone is active...');
-        startAlwaysOnListening();
+        // console.log('🔍 Health check: Ensuring microphone is active...');
+        // startAlwaysOnListening();
       }
-    }, Platform.OS === 'android' && Platform.isTV ? 15000 : 10000); // 15 seconds for TV, 10 for mobile
+    }, Platform.OS === 'android' && Platform.isTV ? 30000 : 20000); // 30 seconds for TV, 20 for mobile
     
     // Set up avatar speaking timeout check
     const avatarSpeakingTimeoutCheck = setInterval(() => {
@@ -149,7 +153,6 @@ export default function Guide({ onSessionEnd, userId, therapistName }: GuideProp
           setAvatarSpeaking(false);
           setMicPausedForAvatar(false);
           setAvatarSpeakingStartTime(null);
-          setSpeaking(false);
           
           // Resume listening if needed
           if (conversationMode === 'always_on' && voiceModeEnabled && !isRecording) {
@@ -228,9 +231,9 @@ export default function Guide({ onSessionEnd, userId, therapistName }: GuideProp
 
   useSpeechRecognitionEvent("end", () => {
     console.log('🛑 SPEECH RECOGNITION ENDED');
-    console.log(`📊 Mode: ${conversationMode}, Speaking: ${speaking}, Always Listening: ${isAlwaysListening}`);
-    setIsRecording(false);
-    setIsListening(false);
+    console.log(`📊 Mode: ${conversationMode}, Always Listening: ${isAlwaysListening}`);
+    // setIsRecording(false);
+    // setIsListening(false);
     
     // CRITICAL: Don't restart if avatar is speaking to prevent echo
     if (avatarSpeaking || micPausedForAvatar) {
@@ -240,26 +243,25 @@ export default function Guide({ onSessionEnd, userId, therapistName }: GuideProp
     
     // Always restart for always-on mode unless avatar is speaking
     if (conversationMode === 'always_on' && isAlwaysListening && !avatarSpeaking && !micPausedForAvatar && voiceModeEnabled) {
-      console.log('🔄 ALWAYS-ON: Restarting microphone immediately...');
+      console.log('🔄 ALWAYS-ON: Restarting microphone...');
       setTimeout(() => {
         if (!avatarSpeaking && !micPausedForAvatar && conversationMode === 'always_on') {
           console.log('🎤 ALWAYS-ON: Starting new listening session...');
-          startAlwaysOnListening();
+          // Add a small delay to ensure state is updated
+          setTimeout(() => {
+            startAlwaysOnListening();
+          }, 100);
         } else {
           console.log('🚫 ALWAYS-ON: Skipping restart - avatar speaking or mic paused');
         }
-      }, 100); // Very short delay
+      }, 1000); // Longer delay to prevent rapid restart loops
     }
-    // In continuous mode, restart listening after a brief pause if not speaking
-    else if (conversationMode === 'continuous' && !speaking && voiceModeEnabled) {
+    // In continuous mode, restart listening after a brief pause
+    else if (conversationMode === 'continuous' && voiceModeEnabled) {
       console.log('⏰ Scheduling restart in 1 second...');
       setTimeout(() => {
-        if (!speaking) {
-          console.log('🔄 Auto-restarting continuous listening...');
-          startContinuousListening();
-        } else {
-          console.log('🚫 Skipping restart - AI is speaking');
-        }
+        console.log('🔄 Auto-restarting continuous listening...');
+        startContinuousListening();
       }, 1000);
     }
   });
@@ -268,14 +270,14 @@ export default function Guide({ onSessionEnd, userId, therapistName }: GuideProp
     console.error('❌ SPEECH RECOGNITION ERROR:');
     console.error(`   Error: ${event.error}`);
     console.error(`   Message: ${event.message}`);
-    console.error(`   Mode: ${conversationMode}, Speaking: ${speaking}`);
+    console.error(`   Mode: ${conversationMode}`);
     setIsRecording(false);
     setIsListening(false);
     setRecognizedText('');
     
     // In always-on mode, try to restart after error if avatar not speaking
     if (conversationMode === 'always_on' && isAlwaysListening && !avatarSpeaking && voiceModeEnabled) {
-      console.log('⏰ ALWAYS-ON: Scheduling error recovery restart in 500ms...');
+      console.log('⏰ ALWAYS-ON: Scheduling error recovery restart in 3 seconds...');
       setTimeout(() => {
         if (!avatarSpeaking && !micPausedForAvatar && isAlwaysListening && conversationMode === 'always_on') {
           console.log('🔄 ALWAYS-ON: Attempting error recovery restart...');
@@ -283,97 +285,87 @@ export default function Guide({ onSessionEnd, userId, therapistName }: GuideProp
         } else {
           console.log('🚫 ALWAYS-ON: Skipping error recovery - avatar is speaking');
         }
-      }, 500);
+      }, 3000); // Longer delay to prevent rapid restart loops
     }
     // In continuous mode, try to restart after error
     else if (conversationMode === 'continuous' && voiceModeEnabled) {
       console.log('⏰ Scheduling error recovery restart in 2 seconds...');
       setTimeout(() => {
-        if (!speaking) {
-          console.log('🔄 Attempting error recovery restart...');
-          startContinuousListening();
-        } else {
-          console.log('🚫 Skipping error recovery - AI is speaking');
-        }
+        console.log('🔄 Attempting error recovery restart...');
+        startContinuousListening();
       }, 2000);
     }
   });
 
+  // Handle speech recognition events
   useSpeechRecognitionEvent("result", (event) => {
-    console.log('🗣️ SPEECH RESULT RECEIVED:');
-    console.log(`   Results count: ${event.results?.length || 0}`);
-    console.log(`   Is Final: ${event.isFinal}`);
-    
-    // CRITICAL: Don't process speech when avatar is speaking to prevent echo
-    if (echoPreventionEnabled && (avatarSpeaking || micPausedForAvatar)) {
-      console.log('🚫 ECHO PREVENTION: Ignoring speech while avatar is speaking');
-      return;
-    }
-    
-    // Additional echo prevention: check if the transcribed text might be the avatar's speech
+    console.log('🎯 SPEECH RESULT:', event);
     if (event.results && event.results.length > 0) {
-      const result = event.results[0];
-      const transcribedText = result.transcript;
-      const confidence = result.confidence;
+      const transcript = event.results[0].transcript;
+      setRecognizedText(transcript);
       
-      console.log('📝 DETECTED SPEECH:');
-      console.log(`   Text: "${transcribedText}"`);
-      console.log(`   Confidence: ${confidence || 'N/A'}`);
-      console.log(`   Length: ${transcribedText.length} characters`);
-      console.log(`   Is Final: ${event.isFinal ? 'YES' : 'NO (interim)'}`);
-      
-      // Echo detection: check for common avatar speech patterns (less aggressive)
-      if (echoPreventionEnabled && avatarSpeaking) {
-        const lowerText = transcribedText.toLowerCase();
-        const isLikelyEcho = (
-          (lowerText.includes('hello') && lowerText.includes('therapist')) ||
-          (lowerText.includes('how are you feeling') && lowerText.includes('today')) ||
-          (lowerText.includes('therapy session') && lowerText.includes('i\'m here')) ||
-          (confidence && confidence < 0.2) // Very low confidence might indicate echo
-        );
-        
-        if (isLikelyEcho) {
-          console.log('🚫 ECHO DETECTION: Likely avatar speech detected, ignoring');
-          setRecognizedText(''); // Clear any pending text
-          return;
-        }
-      }
-      
-      setRecognizedText(transcribedText);
-      
-      // Process both final and interim results (with delay for interim)
+      // Add to history if it's a final result
       if (event.isFinal) {
-        // Filter out very short utterances that might be noise
-        if (transcribedText.trim().length >= 3) {
-          console.log('✅ SENDING FINAL RESULT TO HEYGEN AI');
-          sendVoiceMessage(transcribedText);
-          setRecognizedText(''); // Clear after sending
-        } else {
-          console.log('🚫 Skipping short utterance (likely noise)');
-          setRecognizedText(''); // Clear anyway
-        }
-      } else {
-        console.log('⏳ Interim result - waiting for final...');
-        
-        // Process interim results after a delay if they're substantial
-        if (transcribedText.trim().length >= 5) {
-          // Clear any existing interim timer
-          if (interimTimerRef.current) {
-            clearTimeout(interimTimerRef.current);
-          }
-          
-          // Set a timer to process this interim result if no final result comes
-          interimTimerRef.current = setTimeout(() => {
-            console.log('⏰ Processing interim result after delay:', transcribedText);
-            sendVoiceMessage(transcribedText);
-            setRecognizedText('');
-          }, 1500); // 1.5 second delay
-        }
+        console.log('FINAL RESULT:', event);
+        setAllSpeechResults(prev => [...prev, transcript]);
+        setRecognizedText(''); // Clear current text for next input
       }
-    } else {
-      console.log('⚠️ No speech results in event');
     }
   });
+
+  // useSpeechRecognitionEvent("result", (event) => {
+  //   console.log('🗣️ SPEECH RESULT RECEIVED:');
+  //   console.log(`   Results count: ${event.results?.length || 0}`);
+  //   console.log(`   Is Final: ${event.isFinal}`);
+    
+  //   // CRITICAL: Don't process speech when avatar is speaking to prevent echo
+  //   if (echoPreventionEnabled && (avatarSpeaking || micPausedForAvatar)) {
+  //     console.log('🚫 ECHO PREVENTION: Ignoring speech while avatar is speaking');
+  //     if (event.results && event.results.length > 0) {
+  //       const result = event.results[0];
+  //       const transcribedText = result.transcript;    
+  //       console.log(`Is Final AI Confidence: ${result.confidence !== 0 ? 'YES' : 'NO'}`);    
+  //       console.log(`AI Text: "${transcribedText}"`);
+  //     }
+  //     return;
+  //   }
+    
+  //   // CRITICAL: Don't process speech results during the ignore period
+  //   if (ignoreSpeechResults) {
+  //     console.log('🚫 IGNORING SPEECH: Still in ignore period after restart');
+  //     return;
+  //   }
+    
+  //   if (event.results && event.results.length > 0) {
+  //     const result = event.results[0];
+  //     const transcribedText = result.transcript;
+  //     const confidence = result.confidence;
+      
+  //     console.log('📝 DETECTED SPEECH:');
+  //     console.log(`   Text: "${transcribedText}"`);
+  //     console.log(`   Confidence: ${confidence || 'N/A'}`);
+  //     console.log(`   Length: ${transcribedText.length} characters`);
+  //     console.log(`   Is Final: ${event.isFinal ? 'YES' : 'NO (interim)'}`);
+  //     console.log(`   Is Final Confidence: ${confidence !== 0 ? 'YES' : 'NO'}`);
+      
+  //     setRecognizedText(transcribedText);
+      
+  //     // Add ALL speech results to the display array
+  //     setAllSpeechResults(prev => [...prev, transcribedText]);
+      
+  //     // Process both final and interim results (with delay for interim)
+  //     if (event.isFinal || confidence !== 0) {
+  //       // Filter out very short utterances that might be noise
+  //         console.log('✅ SENDING FINAL RESULT TO HEYGEN AI');
+  //         sendVoiceMessage(transcribedText);
+  //         setRecognizedText(''); // Clear after sending
+  //     } else {
+  //       console.log('⏳ Interim result - waiting for final...');
+  //     }
+  //   } else {
+  //     console.log('⚠️ No speech results in event');
+  //   }
+  // });
 
   // Handle speech recognition errors
   useSpeechRecognitionEvent("error", (event) => {
@@ -561,54 +553,26 @@ export default function Guide({ onSessionEnd, userId, therapistName }: GuideProp
             
             // Handle avatar speaking events to prevent echo
             if (data.type === 'avatar_speaking' || data.type === 'speech_start' || data.event === 'avatar_speaking') {
-              console.log('🗣️ Avatar started speaking - pausing microphone');
+              console.log('🗣️ Avatar started speaking - muting microphone');
               setAvatarSpeaking(true);
-              setMicPausedForAvatar(true);
               setAvatarSpeakingStartTime(Date.now());
-              
-              // Stop speech recognition immediately if echo prevention is enabled
-              if (echoPreventionEnabled && isRecording) {
-                console.log('🛑 Stopping speech recognition due to avatar speaking');
-                ExpoSpeechRecognitionModule.stop();
-                setIsRecording(false);
-                setIsListening(false);
-              }
+              muteMicrophone();
             }
             
             // Handle avatar finished speaking events
             if (data.type === 'avatar_finished' || data.type === 'speech_end' || data.event === 'avatar_finished') {
-              console.log('✅ Avatar finished speaking - resuming microphone');
+              console.log('✅ Avatar finished speaking - unmuting microphone');
               setAvatarSpeaking(false);
-              setMicPausedForAvatar(false);
               setAvatarSpeakingStartTime(null);
-              
-              // Resume listening after a delay to prevent echo
-              if (echoPreventionEnabled) {
-                setTimeout(() => {
-                  if (conversationMode === 'always_on' && voiceModeEnabled && !isRecording) {
-                    console.log('🔄 Resuming listening after avatar speech');
-                    startAlwaysOnListening();
-                  }
-                }, 1000);
-              }
+              unmuteMicrophone();
             }
             
             // Handle task completion events
             if (data.type === 'task_completed' || data.event === 'task_completed') {
               console.log('✅ Task completed - avatar should be finished speaking');
               setAvatarSpeaking(false);
-              setMicPausedForAvatar(false);
-              setSpeaking(false);
-              
-              // Resume listening after a delay
-              if (echoPreventionEnabled) {
-                setTimeout(() => {
-                  if (conversationMode === 'always_on' && voiceModeEnabled && !isRecording) {
-                    console.log('🔄 Resuming listening after task completion');
-                    startAlwaysOnListening();
-                  }
-                }, 1000);
-              }
+              setAvatarSpeakingStartTime(null);
+              unmuteMicrophone();
             }
             
             // Handle other message types
@@ -650,6 +614,10 @@ export default function Guide({ onSessionEnd, userId, therapistName }: GuideProp
             console.log('🎬 Session fully initialized - avatar will start speaking now...');
             setSessionInitialized(true);
             
+            // Mute microphone before welcome message to prevent echo
+            console.log('🔇 Muting microphone for welcome message...');
+            await muteMicrophone();
+            
             const greetingText = therapistName 
               ? `Hello! I'm ${therapistName}, your AI therapist. I'm here for our therapy session. How are you feeling today?`
               : `Hello! I'm your AI therapist. I'm here for our therapy session. How are you feeling today?`;
@@ -675,19 +643,24 @@ export default function Guide({ onSessionEnd, userId, therapistName }: GuideProp
               // Wait for avatar to finish speaking the greeting, then start listening
               setTimeout(() => {
                 console.log('🚀 ALWAYS-ON: Avatar greeting should be finished, starting listening...');
-                setAvatarSpeaking(false);
-                setSpeaking(false);
-                setMicPausedForAvatar(false);
-                setIsAlwaysListening(true);
-                startAlwaysOnListening();
+                // Unmute microphone after welcome message is finished
+                // unmuteMicrophone();
+                // setAvatarSpeaking(false);
+                // setMicPausedForAvatar(false);
+                // setIsAlwaysListening(true);
+                // startAlwaysOnListening();
               }, 8000); // Increased delay to give avatar more time to speak the greeting
             } else if (conversationMode === 'continuous' && voiceModeEnabled) {
               setTimeout(() => {
+                // Unmute microphone after welcome message is finished
+                // unmuteMicrophone();
                 startContinuousListening();
               }, 5000);
             }
           } catch (error) {
             console.error("Error sending initial greeting:", error);
+            // Ensure microphone is unmuted even if there's an error
+            unmuteMicrophone();
           }
         }, 5000); // Increased delay from 2s to 5s to ensure session is fully ready
       }
@@ -708,7 +681,6 @@ export default function Guide({ onSessionEnd, userId, therapistName }: GuideProp
 
   const sendText = async () => {
     try {
-      setSpeaking(true);
 
       // Send task request
       const response = await fetch(
@@ -733,7 +705,6 @@ export default function Guide({ onSessionEnd, userId, therapistName }: GuideProp
     } catch (error) {
       console.error("Error sending text:", error);
     } finally {
-      setSpeaking(false);
     }
   };
 
@@ -744,7 +715,6 @@ export default function Guide({ onSessionEnd, userId, therapistName }: GuideProp
       console.log(`📊 Current Settings:`);
       console.log(`   Mode: ${conversationMode}`);
       console.log(`   Voice Enabled: ${voiceModeEnabled}`);
-      console.log(`   Currently Speaking: ${speaking}`);
       console.log(`   Already Recording: ${isRecording}`);
       
       // Request permissions first
@@ -769,6 +739,16 @@ export default function Guide({ onSessionEnd, userId, therapistName }: GuideProp
       
       // Clear previous recognition results
       setRecognizedText('');
+      
+      // Ensure speech recognition is completely stopped before starting
+      try {
+        // console.log('🛑 Ensuring speech recognition is stopped...');
+        // ExpoSpeechRecognitionModule.stop();
+        // Small delay to ensure stop is processed
+        await new Promise(resolve => setTimeout(resolve, 100));
+      } catch (stopError) {
+        console.log('ℹ️ Speech recognition was not running');
+      }
       
       // Android TV optimized speech recognition config
       const config = {
@@ -798,11 +778,21 @@ export default function Guide({ onSessionEnd, userId, therapistName }: GuideProp
       }
       
       // Start speech recognition with expo-speech-recognition
+      console.log('🚀 Starting ExpoSpeechRecognitionModule.start()...');
       ExpoSpeechRecognitionModule.start(config);
       console.log('✅ TV-optimized speech recognition started');
       
       setIsRecording(true);
       setIsListening(true);
+      console.log('✅ Recording state set to true');
+      
+      // Ignore speech results for a brief period to avoid old audio
+      setIgnoreSpeechResults(true);
+      console.log('⏳ Ignoring speech results for 1 second to avoid old audio...');
+      setTimeout(() => {
+        setIgnoreSpeechResults(false);
+        console.log('✅ Ready to process new speech results');
+      }, 1000);
     } catch (error) {
       console.error('❌ Failed to start speech recognition:', error);
       handleTVMicrophoneError(error);
@@ -829,10 +819,9 @@ export default function Guide({ onSessionEnd, userId, therapistName }: GuideProp
     console.log('🔄 CONTINUOUS LISTENING CHECK:');
     console.log(`   Mode: ${conversationMode}`);
     console.log(`   Voice Enabled: ${voiceModeEnabled}`);
-    console.log(`   Speaking: ${speaking}`);
     console.log(`   Recording: ${isRecording}`);
     
-    if (conversationMode === 'continuous' && voiceModeEnabled && !speaking && !isRecording) {
+    if (conversationMode === 'continuous' && voiceModeEnabled) {
       console.log('✅ CONDITIONS MET - STARTING CONTINUOUS LISTENING...');
       await startRecording();
     } else {
@@ -841,6 +830,59 @@ export default function Guide({ onSessionEnd, userId, therapistName }: GuideProp
   };
 
   const startAlwaysOnListening = async () => {
+    
+    // Prevent multiple simultaneous restart attempts
+    if (isRestarting) {
+      console.log('🚫 Already restarting - skipping duplicate request');
+      return;
+    }
+    
+    // Check each condition individually for better debugging
+    const conditions = {
+      conversationMode: conversationMode === 'always_on',
+      voiceEnabled: voiceModeEnabled,
+      notAvatarSpeaking: !avatarSpeaking,
+      notMicPaused: !micPausedForAvatar,
+      alwaysListening: isAlwaysListening
+    };
+    
+    console.log('🔍 START ALWAYS-ON CONDITION CHECK:');
+    console.log(`   conversationMode === 'always_on': ${conditions.conversationMode}`);
+    console.log(`   voiceModeEnabled: ${conditions.voiceEnabled}`);
+    console.log(`   !avatarSpeaking: ${conditions.notAvatarSpeaking}`);
+    console.log(`   !micPausedForAvatar: ${conditions.notMicPaused}`);
+    console.log(`   isAlwaysListening: ${conditions.alwaysListening}`);
+    
+    if (conditions.conversationMode && conditions.voiceEnabled && conditions.notAvatarSpeaking && 
+        conditions.notMicPaused && conditions.alwaysListening) {
+      console.log('✅ ALWAYS-ON CONDITIONS MET - STARTING LISTENING...');
+      
+      try {
+        // setIsRestarting(true);
+        // Use standard recording method for reliability
+        // await startRecording();
+        // console.log('✅ Always-on listening started successfully');
+      } catch (error) {
+        console.error('❌ Failed to start always-on listening:', error);
+        // Try again after a longer delay to prevent rapid loops
+        setTimeout(() => {
+          if (conversationMode === 'always_on' && voiceModeEnabled) {
+            console.log('🔄 Retrying always-on listening...');
+            startAlwaysOnListening();
+          }
+        }, 3000);
+      } finally {
+        setIsRestarting(false);
+      }
+    } else {
+      console.log('🚫 ALWAYS-ON CONDITIONS NOT MET - SKIPPING');
+      if (!conditions.conversationMode) console.log('   Reason: Not always-on mode');
+      if (!conditions.voiceEnabled) console.log('   Reason: Voice not enabled');
+      if (!conditions.notAvatarSpeaking) console.log('   Reason: Avatar is speaking');
+      if (!conditions.notMicPaused) console.log('   Reason: Mic paused for avatar');
+      if (!conditions.alwaysListening) console.log('   Reason: Not always listening');
+    }
+
     console.log('🎤 ALWAYS-ON LISTENING CHECK:');
     console.log(`   Mode: ${conversationMode}`);
     console.log(`   Voice Enabled: ${voiceModeEnabled}`);
@@ -848,29 +890,7 @@ export default function Guide({ onSessionEnd, userId, therapistName }: GuideProp
     console.log(`   Mic Paused for Avatar: ${micPausedForAvatar}`);
     console.log(`   Recording: ${isRecording}`);
     console.log(`   Always Listening: ${isAlwaysListening}`);
-    
-    if (conversationMode === 'always_on' && voiceModeEnabled && !avatarSpeaking && !micPausedForAvatar && !isRecording && isAlwaysListening) {
-      console.log('✅ ALWAYS-ON CONDITIONS MET - STARTING LISTENING...');
-      
-      try {
-        // Use standard recording method for reliability
-        await startRecording();
-        console.log('✅ Always-on listening started');
-      } catch (error) {
-        console.error('❌ Failed to start always-on listening:', error);
-        // Try again after a short delay
-        setTimeout(() => {
-          if (conversationMode === 'always_on' && voiceModeEnabled) {
-            console.log('🔄 Retrying always-on listening...');
-            startAlwaysOnListening();
-          }
-        }, 1000);
-      }
-    } else {
-      console.log('🚫 ALWAYS-ON CONDITIONS NOT MET - SKIPPING');
-      if (avatarSpeaking) console.log('   Reason: Avatar is speaking');
-      if (micPausedForAvatar) console.log('   Reason: Mic paused for avatar');
-    }
+    console.log(`   Is Restarting: ${isRestarting}`);
   };
 
   const toggleConversationMode = () => {
@@ -881,29 +901,24 @@ export default function Guide({ onSessionEnd, userId, therapistName }: GuideProp
     console.log(`🔄 CONVERSATION MODE CHANGE: ${conversationMode} → ${newMode}`);
     setConversationMode(newMode);
     
-    if (newMode === 'always_on' && voiceModeEnabled && !speaking) {
+    if (newMode === 'always_on' && voiceModeEnabled) {
       console.log('⏰ Starting always-on mode...');
       setIsAlwaysListening(true);
       setTimeout(() => {
         console.log('🚀 ALWAYS-ON: Starting listening...');
         startAlwaysOnListening();
       }, 200);
-    } else if (newMode === 'continuous' && voiceModeEnabled && !speaking) {
+    } else if (newMode === 'continuous' && voiceModeEnabled) {
       console.log('⏰ Scheduling continuous mode startup...');
       setIsAlwaysListening(false);
       setTimeout(() => {
         console.log('🚀 Starting continuous mode...');
         startContinuousListening();
       }, 500);
-    } else if (newMode === 'push_to_talk') {
-      console.log('🛑 Switching to push-to-talk mode...');
-      setIsAlwaysListening(false);
-      if (isRecording) {
-        stopRecording();
-      }
-    }
+    } 
   };
 
+// 👇 Only the relevant updated section of `sendVoiceMessage` is revised
   const sendVoiceMessage = async (transcribedText: string) => {
     try {
       console.log('🚀 SENDING VOICE MESSAGE TO AI:');
@@ -911,32 +926,15 @@ export default function Guide({ onSessionEnd, userId, therapistName }: GuideProp
       console.log(`   Length: ${transcribedText.length} characters`);
       console.log(`   Session ID: ${sessionId}`);
       console.log(`   Timestamp: ${new Date().toISOString()}`);
-      
-      // Set speaking state but don't immediately pause microphone
-      // Let the WebSocket events handle the actual avatar speaking state
-      console.log('🎤 Setting speaking state...');
-      setSpeaking(true);
-      
-      // Only pause microphone if echo prevention is enabled
+
+      console.log('🎤 Sending voice message...');
+
+      // ✅ Preemptively mute microphone before making the API call
       if (echoPreventionEnabled) {
-        console.log('🎤 Echo prevention enabled - pausing microphone...');
-        setAvatarSpeaking(true);
-        setMicPausedForAvatar(true);
-        
-        // Stop speech recognition immediately and clear any pending results
-        if (isRecording) {
-          console.log('🛑 Stopping speech recognition immediately...');
-          try {
-            ExpoSpeechRecognitionModule.stop();
-            setIsRecording(false);
-            setIsListening(false);
-            setRecognizedText(''); // Clear any pending speech
-          } catch (error) {
-            console.error('❌ Error stopping speech recognition:', error);
-          }
-        }
+        console.log('🎤 Echo prevention enabled - muting microphone BEFORE speaking starts');
+        muteMicrophone();
       }
-      
+
       // Clear any interim results
       setRecognizedText('');
 
@@ -945,7 +943,7 @@ export default function Guide({ onSessionEnd, userId, therapistName }: GuideProp
         text: transcribedText,
         task_type: "talk",
       };
-      
+
       console.log('📤 API Request:', JSON.stringify(requestBody, null, 2));
 
       const response = await fetch(
@@ -963,65 +961,31 @@ export default function Guide({ onSessionEnd, userId, therapistName }: GuideProp
       const data = await response.json();
       console.log('📥 AI RESPONSE RECEIVED');
       console.log('🗣️ Avatar will start speaking now...');
-      setText(""); // Clear any text input
-      
-      // Auto-resume microphone after a reasonable delay if WebSocket events don't fire
+      setText("");
+
       if (echoPreventionEnabled) {
         const estimatedWords = transcribedText.length / 5;
         const estimatedSpeakingTime = Math.max(3000, (estimatedWords / 120) * 60 * 1000);
-        const bufferTime = 2000; // extra buffer time
+        const bufferTime = 2000;
         const totalWaitTime = estimatedSpeakingTime + bufferTime;
-        
-        console.log(`⏱️ Auto-resume timer: ${Math.round(totalWaitTime/1000)}s`);
-        
+
+        console.log(`⏱️ Auto-resume timer: ${Math.round(totalWaitTime / 1000)}s`);
+
         setTimeout(() => {
-          console.log('⏱️ Auto-resume timer fired - resetting avatar speaking state');
-          setAvatarSpeaking(false);
-          setSpeaking(false);
-          setMicPausedForAvatar(false);
-          
-          // Resume listening if needed
-          if (conversationMode === 'always_on' && voiceModeEnabled && !isRecording) {
-            console.log('🔄 Auto-resuming listening after timer');
-            startAlwaysOnListening();
-          }
+          console.log('⏱️ Auto-resume timer fired - unmuting microphone');
+          unmuteMicrophone();
         }, totalWaitTime);
       }
-      
     } catch (error) {
       console.error('❌ ERROR SENDING VOICE MESSAGE:', error);
-      // Reset avatar speaking state on error
-      setAvatarSpeaking(false);
-      setSpeaking(false);
-      setMicPausedForAvatar(false);
+      unmuteMicrophone();
     }
   };
 
   // Function to handle when avatar finishes speaking
   const onAvatarFinishedSpeaking = () => {
     console.log('✅ AVATAR FINISHED SPEAKING');
-    setAvatarSpeaking(false);
-    setSpeaking(false);
-    
-    // Resume microphone with longer delay to ensure echo prevention
-    if (conversationMode === 'always_on' && micPausedForAvatar && voiceModeEnabled) {
-      console.log('🎤 ALWAYS-ON: Resuming microphone after avatar speech...');
-      setMicPausedForAvatar(false);
-      
-      // Longer delay to ensure avatar audio completely finishes
-      setTimeout(() => {
-        if (!avatarSpeaking && conversationMode === 'always_on' && !isRecording) {
-          console.log('🔄 ALWAYS-ON: Restarting listening after echo-safe delay...');
-          startAlwaysOnListening();
-        } else {
-          console.log('🚫 ALWAYS-ON: Skipping restart - conditions not met');
-        }
-      }, 1000); // Increased delay to 1 second for better echo prevention
-    } else if (conversationMode === 'continuous' && voiceModeEnabled) {
-      setTimeout(() => {
-        startContinuousListening();
-      }, 1000);
-    }
+    unmuteMicrophone();
   };
 
   const closeSession = async () => {
@@ -1059,7 +1023,7 @@ export default function Guide({ onSessionEnd, userId, therapistName }: GuideProp
       setWsUrl("");
       setToken("");
       setText("");
-      setSpeaking(false);
+
       setSessionInitialized(false);
 
       console.log("Session closed successfully");
@@ -1131,6 +1095,50 @@ export default function Guide({ onSessionEnd, userId, therapistName }: GuideProp
     } catch (error) {
       console.error('❌ Microphone test failed:', error);
       Alert.alert('Test Failed', `Microphone test failed: ${error instanceof Error ? error.message : 'Unknown error'}`);
+    }
+  };
+
+  // Centralized microphone muting functions
+  const muteMicrophone = async () => {
+    try {
+      console.log('🔇 MUTING MICROPHONE...');
+      
+      // 1. Stop any active speech recognition (this prevents echo)
+      if (isRecording) {
+        console.log('🛑 Stopping speech recognition...');
+        ExpoSpeechRecognitionModule.stop();
+        // setIsRecording(false);
+        setIsListening(false);
+      }
+      
+      // 2. Set microphone paused state
+      setMicPausedForAvatar(true);
+      
+      // 3. Clear any pending speech recognition results
+      setRecognizedText('');
+      
+      console.log('✅ Microphone muted successfully (speech recognition stopped)');
+    } catch (error) {
+      console.error('❌ Error muting microphone:', error);
+    }
+  };
+
+  const unmuteMicrophone = async () => {
+    try {
+      console.log('🔊 UNMUTING MICROPHONE...');
+      
+      // 1. Reset microphone paused state
+      setMicPausedForAvatar(false);
+      
+      // 2. Resume listening if in always-on mode
+      if (conversationMode === 'always_on' && voiceModeEnabled) {
+        console.log('🔄 Resuming listening after unmute...');
+        startAlwaysOnListening();
+      }
+      
+      console.log('✅ Microphone unmuted successfully (speech recognition will resume)');
+    } catch (error) {
+      console.error('❌ Error unmuting microphone:', error);
     }
   };
 
@@ -1261,19 +1269,85 @@ export default function Guide({ onSessionEnd, userId, therapistName }: GuideProp
       <RoomView
         onClose={closeSession}
         loading={loading}
+        microphoneState={{
+          isRecording,
+          isListening,
+          avatarSpeaking,
+          micPausedForAvatar,
+          conversationMode,
+          voiceModeEnabled,
+          recognizedText,
+          allSpeechResults,
+        }}
       />
     </LiveKitRoom>
   );
 }
 
+interface MicrophoneState {
+  isRecording: boolean;
+  isListening: boolean;
+  avatarSpeaking: boolean;
+  micPausedForAvatar: boolean;
+  conversationMode: string;
+  voiceModeEnabled: boolean;
+  recognizedText: string;
+  allSpeechResults: string[];
+}
+
 const RoomView = ({
   onClose,
   loading,
+  microphoneState,
 }: {
   onClose: () => void;
   loading: boolean;
+  microphoneState: MicrophoneState;
 }) => {
   const tracks = useTracks([Track.Source.Camera], { onlySubscribed: true });
+  const [isSystemMuted, setIsSystemMuted] = useState(false);
+  const [audioLevel, setAudioLevel] = useState(0);
+
+  // Check actual Android microphone mute status and audio level
+  useEffect(() => {
+    const checkMicrophoneStatus = async () => {
+      if (Platform.OS === 'android') {
+        try {
+          const muted = await AudioControl.isSystemMuted();
+          setIsSystemMuted(muted);
+          
+          // Get current system volume as a proxy for audio level
+          const volume = await AudioControl.getSystemVolume();
+          setAudioLevel(volume / 100); // Convert to 0-1 range
+        } catch (error) {
+          console.error('Failed to check microphone status:', error);
+        }
+      }
+    };
+
+    // Check immediately and then every 2 seconds
+    checkMicrophoneStatus();
+    const interval = setInterval(checkMicrophoneStatus, 2000);
+
+    return () => clearInterval(interval);
+  }, []);
+
+  // Determine microphone status based on actual Android state
+  const getMicrophoneStatus = () => {
+    if (!microphoneState.voiceModeEnabled) return { status: 'DISABLED', color: '#999', text: 'Voice Disabled' };
+    
+    // Check actual Android microphone mute state
+    if (Platform.OS === 'android' && isSystemMuted) {
+      return { status: 'SYSTEM_MUTED', color: '#FF6B6B', text: 'System Muted' };
+    }
+    
+    if (microphoneState.avatarSpeaking || microphoneState.micPausedForAvatar) return { status: 'MUTED', color: '#FF6B6B', text: 'Mic Muted' };
+    if (microphoneState.isRecording && microphoneState.isListening) return { status: 'LISTENING', color: '#4CAF50', text: 'Listening' };
+    if (microphoneState.conversationMode === 'always_on') return { status: 'STANDBY', color: '#FFA726', text: 'Standby' };
+    return { status: 'OFF', color: '#999', text: 'Mic Off' };
+  };
+
+  const micStatus = getMicrophoneStatus();
 
   return (
     <SafeAreaView style={styles.container}>
@@ -1289,6 +1363,40 @@ const RoomView = ({
           ) : null
         )}
       </View>
+      
+      {/* Speech Text Display */}
+      <View style={styles.speechContainer}>
+        <Text style={styles.speechTitle}>🎤 Speech Recognition:</Text>
+        <View style={styles.speechTextContainer}>
+          <Text style={styles.currentSpeechText}>
+            {microphoneState.recognizedText || 'Listening...'}
+          </Text>
+        </View>
+        
+        {/* All Speech Results */}
+        <Text style={styles.speechHistoryTitle}>All Results:</Text>
+        <View style={styles.speechHistoryContainer}>
+          {microphoneState.allSpeechResults.length > 0 ? (
+            microphoneState.allSpeechResults.slice(-10).map((text, index) => (
+              <Text key={index} style={styles.speechHistoryText}>
+                • {text}
+              </Text>
+            ))
+          ) : (
+            <Text style={styles.noSpeechText}>No speech detected yet...</Text>
+          )}
+        </View>
+      </View>
+      
+      {/* Microphone Status Button */}
+      <View style={styles.statusContainer}>
+        <View style={[styles.microphoneStatusButton, { backgroundColor: micStatus.color }]}>
+          <Text style={styles.microphoneStatusText}>
+            🎤 {micStatus.text}
+          </Text>
+        </View>
+      </View>
+      
       {/* Hidden close button for emergency use only */}
       <TouchableOpacity
         style={[styles.hiddenCloseButton, loading && styles.disabledButton]}
@@ -1638,5 +1746,77 @@ const styles = StyleSheet.create({
     fontSize: 12,
     color: "#666",
     marginBottom: 5,
+  },
+  // Microphone Status Button Styles
+  statusContainer: {
+    position: "absolute",
+    top: 50,
+    left: 20,
+    zIndex: 1000,
+  },
+  microphoneStatusButton: {
+    paddingHorizontal: 16,
+    paddingVertical: 8,
+    borderRadius: 20,
+    elevation: 3,
+    shadowColor: "#000",
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.3,
+    shadowRadius: 4,
+  },
+  microphoneStatusText: {
+    color: "#FFF",
+    fontSize: 14,
+    fontWeight: "600",
+    textAlign: "center",
+  },
+  // Speech Display Styles
+  speechContainer: {
+    position: "absolute",
+    top: 120,
+    left: 20,
+    right: 20,
+    backgroundColor: "rgba(255, 255, 255, 0.9)",
+    padding: 15,
+    borderRadius: 10,
+    zIndex: 1000,
+    maxHeight: 300,
+  },
+  speechTitle: {
+    fontSize: 16,
+    fontWeight: "bold",
+    color: "#A67B5B",
+    marginBottom: 10,
+  },
+  speechTextContainer: {
+    backgroundColor: "#f9f9f9",
+    padding: 10,
+    borderRadius: 5,
+    marginBottom: 10,
+    minHeight: 40,
+  },
+  currentSpeechText: {
+    fontSize: 14,
+    color: "#333",
+    fontStyle: "italic",
+  },
+  speechHistoryTitle: {
+    fontSize: 14,
+    fontWeight: "600",
+    color: "#666",
+    marginBottom: 5,
+  },
+  speechHistoryContainer: {
+    maxHeight: 150,
+  },
+  speechHistoryText: {
+    fontSize: 12,
+    color: "#333",
+    marginBottom: 2,
+  },
+  noSpeechText: {
+    fontSize: 12,
+    color: "#999",
+    fontStyle: "italic",
   },
 });

@@ -30,11 +30,14 @@ import {
   serverTimestamp,
 } from "firebase/firestore";
 import { db } from "@/firebase";
-import Guide from "./Guide";
 import { getSelectedPod, saveSelectedPod, storage } from "@/utils/storage";
 import QRCode from "react-native-qrcode-svg";
 import * as Sentry from '@sentry/react-native';
+import MicrophoneDisplay from "./MicrophoneDisplay";
+import Guide from "./Guide";
 // LiveKit imports removed - now using Guide.tsx for AI therapy
+
+// Microphone Display Component removed - using imported component
 
 // const defaultVideoSource =
 //   "https://firebasestorage.googleapis.com/v0/b/therapod-454503.firebasestorage.app/o/Mindful%20moment%20final.mp4?alt=media&token=91a4dcbf-d68c-4796-b6fe-551e80720fec";
@@ -1248,12 +1251,19 @@ export default function HomeScreenView() {
 
   // Show AI Therapy with Guide component
   if (sessionType === "ai_therapy" && podStatus === "active" && countdown === null) {
+    // return (
+    //   <Guide 
+    //     onSessionEnd={handleCloseSession}
+    //     userId={currentUserId}
+    //     therapistName={currentTherapistName}
+    //   />
+    // );
     return (
-      <Guide 
-        onSessionEnd={handleCloseSession}
-        userId={currentUserId}
-        therapistName={currentTherapistName}
-      />
+    <MicrophoneDisplay 
+      onSessionEnd={handleCloseSession}
+      userId={currentUserId}
+      therapistName={currentTherapistName}
+     />
     );
   }
 
@@ -1325,9 +1335,6 @@ export default function HomeScreenView() {
     );
   }
 
-
-
-  // Show video player
   return (
     <View style={styles.videoContainer}>
       {isVideoLoading && (
